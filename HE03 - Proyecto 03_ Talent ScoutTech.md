@@ -88,11 +88,11 @@ Para automatizar esto, me he montado un scriptillo en Python que va probando con
 
 `conn.close()`
 
-Al lanzarlo, ¡bingo\! Me devolvió esto:
+Al lanzarlo, me devolvió esto:
 
 \!\[\]\[image2\]
 
-Así que ya tenemos una entrada válida: hay un usuario cuya contraseña es “1234”.
+Así que ya tenemos una entrada válida: hay un usuario con contraseña es “1234”.
 
 | Explicación del ataque | Un ataque de fuerza bruta sencilla haciendo peticiones POST con un script de python y el diccionario provisto. |
 | :---- | :---- |
@@ -185,9 +185,6 @@ Hay que tratar cualquier cosa que venga de la base de datos como "texto peligros
 En PHP tenemos htmlspecialchars(), que convierte los caracteres conflictivos (\<, \>, comillas) en su versión inofensiva de texto (\&lt;, etc.). Así se ve el código del script en pantalla, pero no se ejecuta.
 
 El código seguro sería:
-
-php
-
 *`// Solución: Envolver la salida con htmlspecialchars`*
 
 `echo "Comment: " . htmlspecialchars($row['body'], ENT_QUOTES, 'UTF-8');`
@@ -231,8 +228,6 @@ Para adecentarlo un poco habría que hacer esto:
 
 Como estamos en un entorno de pruebas y no tenemos servidor de correo, lo crítico que sí o sí hay que implementar ya es la validación y el hash de contraseñas:
 
-php
-
 *`// Ejemplo de implementación segura (simplificado)`*
 
 `$username = filter_input(INPUT_POST, 'username', FILTER_SANITIZE_SPECIAL_CHARS);`
@@ -273,8 +268,6 @@ Esto es lo que hay que cambiar:
 
 Lo que hay que tocar en auth.php:
 
-php
-
 `session_start();`
 
 *`// Al loguearse correctamente:`*
@@ -302,8 +295,6 @@ Lo suyo sería:
 
 Lo más rápido y efectivo ahora es poner la verificación de sesión:
 
-php
-
 `session_start();`
 
 `if (!isset($_SESSION['user_id'])) {`
@@ -327,8 +318,6 @@ Para blindar esto:
 
 La solución del .htaccess es muy fácil de aplicar:
 
-text
-
 `# Bloquear acceso web a todos los archivos`
 
 `Order Deny,Allow`
@@ -344,8 +333,6 @@ Para arreglarlo hay que pasar todo al lado del servidor:
 1. Checkear sesión siempre: Tener un check\_session.php que verifique que la sesión es válida en cada página.  
 2. Caducidad: Si el usuario se va a comer y deja la sesión abierta, que se cierre sola a los 30 minutos.  
 3. Cookies blindadas: Configurar la cookie de sesión para que tenga HttpOnly (así JavaScript no puede leerla y nos protegemos un poco de XSS) y Secure (para que solo viaje por HTTPS).
-
-php
 
 *`// Configuración segura de cookies de sesión`*
 
@@ -386,8 +373,6 @@ Si entras a una carpeta sin index.php (como css/ o img/), Apache te lista todos 
 
 Se arregla fácil quitando el listado con Options \-Indexes en la configuración global o en el .htaccess.
 
-text
-
 `<Directory /var/www/html>`
 
     `Options -Indexes`
@@ -415,8 +400,6 @@ e) Ojo con los backups
 Como vimos antes, dejarse archivos .php\~ o .bak es un peligro.  
 Podemos decirle a Apache que bloquee directamente el acceso a cualquier archivo que termine en estas extensiones, por si a algún desarrollador se le olvida borrarlo.
 
-text
-
 `<FilesMatch "(\.(bak|config|sql|ini|log|sh|inc|swp)|~)$">`
 
     `Order allow,deny`
@@ -440,8 +423,6 @@ a) La trampa del botón "Profile"
 
 Para ver si podía engañar a un usuario para que donara dinero sin querer, modifiqué list\_players.php. Añadí un botón que parece inofensivo ("Profile") pero que en realidad lanza la petición de donación.
 
-xml
-
 *`<!-- Botón malicioso disfrazado -->`*
 
 `<a href="http://web.pagos/donate.php?amount=100&receiver=attacker" class="button">`
@@ -458,8 +439,6 @@ El botón funciona, pero requiere que la víctima haga clic. Para hacerlo más l
 La idea es que la petición se haga sola nada más cargar la página, sin tocar nada.
 
 Puse este comentario:
-
-xml
 
 `¡Gran jugador!`
 
@@ -484,7 +463,6 @@ Si la web de pagos se pone estricta y solo acepta peticiones POST, mi truco de l
 
 Puedo inyectar un formulario oculto y usar un poco de JavaScript para enviarlo solo:
 
-xml
 
 `<form id="csrf_form" action="http://web.pagos/donate.php" method="POST">`
 
