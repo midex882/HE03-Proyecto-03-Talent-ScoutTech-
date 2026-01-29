@@ -5,8 +5,8 @@
 ## **a)**
 
  Para provocar una respuesta que nos pueda dar una pista de cual es la consulta que se hace, he ido a la página “Insertar jugador”. He probado a no poner nada y enviar el formulario, y también a poner como usuario una sola comilla “ ‘ ”, sin poner contraseña. Esto nos da acceso, indicando que el control de acceso no funciona adecuadamente, pero además nos da algunos errores.
+<img width="682" height="598" alt="image" src="https://github.com/user-attachments/assets/6970a856-b94d-4d93-a4a3-4ede4da5b74b" />
 
-![][image1]
 
 Esto nos da algunas pistas. La primera de ellas es que esas dos entradas han roto la sintaxis de la consulta, por lo que sabemos que no se están usando sentencias preparadas. Después, nos dice que la web esperaba como respuesta de la base de datos un objeto o un array, pero se ha devuelto un booleano (false, probablemente), ya que los usuarios que hemos probado no existen. El formulario intenta entonces acceder al nombre del jugador y su equipo, pero esto también genera un error puesto que la base de datos no los ha proporcionado.
 
@@ -26,6 +26,7 @@ Ahora vamos a intentar impersonar a un usuario a partir de un diccionario de con
 
 Para ello, podemos usar una herramienta como algún script personalizado que nos permita hacer un intento de entrada con el diccionario y una inyeccion sql:
 
+```
 import urllib.parse  
 import http.client
 
@@ -70,9 +71,12 @@ for pwd in passwords:
 
 conn.close()
 
+```
+
 Al ejecutarlo, encontramos esta respuesta:
 
-![][image2]
+<img width="553" height="139" alt="image" src="https://github.com/user-attachments/assets/77715a9c-3d79-44f2-87cd-d237886cf815" />
+
 
 Así que ahora sabemos que hay un usuario con contraseña “1234”
 
@@ -132,12 +136,16 @@ La URL resultante sería http://localhost/web/add\_comment.php?id=3', '1', 'es l
 Para comprobar si la aplicación es vulnerable a Cross Site Scripting, podemos probar a introducir código JS en el campo de “comentario”   
 El siguiente mensaje se introduce como comentario:
 
-\<script\>alert('test xss');\</script\>  
-![][image3]
+```
+\<script\>alert('test xss');\</script\>
+```
+<img width="672" height="537" alt="image" src="https://github.com/user-attachments/assets/2481d90c-ec37-4794-bb8c-c8ca4579caf7" />
+
 
 Y al entrar otra vez en la sección de comentarios de la jugadora “Candela”, encontramos esto:
 
-![][image4]
+<img width="670" height="125" alt="image" src="https://github.com/user-attachments/assets/5457ed77-f661-4394-b0f1-4e24df318210" />
+
 
 La alerta de JS nos indica que existe una vulnerabilidad a XSS, ya que el código JS se ejecuta sin problemas, por lo que no se está filtrando ni protegiendo contra su inyección.
 
@@ -159,7 +167,7 @@ Entonces, para cumplir con el estándar HTML y evitar errores de interpretación
 3) ## **Problema en show\_comments.php y su corrección**
 
 Al revisar el código fuente del archivo show\_comments.php, nos encontramos con que los comentarios se extraen de la base de datos y se muestran directamente en el navegador del usuario sin ningún tipo de limpieza o validación. Lo podriamos hacer así:
-
+```
 $query \= "SELECT \* FROM comments WHERE playerId \= ".$\_GET\['id'\];  
 $result \= $db-\>query($query);
 
@@ -167,7 +175,7 @@ while ($row \= $result-\>fetchArray()) {
     *// el problema es que se imprime el cuerpo directamente, creo*  
     echo "Comment: " . $row\['body'\];   
 }
-
+```
 La aplicación confía ciegamente en el contenido guardado en la columna body de la tabla comments. Si un atacante ha logrado guardar un script malicioso (como vimos en el apartado anterior con \<script\>alert('XSS')\</script\>), show\_comments.php lo imprimirá tal cual. El navegador interpretará ese texto como código HTML/JavaScript ejecutable en lugar de como texto plano, disparando el ataque XSS (Cross-Site Scripting).
 
 Para arreglar esto, tendremos que asegurarnos de que cualquier dato que provenga de la base de datos sea tratado como texto seguro antes de mostrarlo en el HTML.
@@ -187,10 +195,12 @@ Para descubrir si hay más páginas afectadas por esta vulnerabilidad, he revisa
 Tras este análisis, he descubierto que el archivo list\_players.php también es vulnerable.  
 En list\_players.php, el código muestra una lista de jugadores con sus nombres y equipos. Al revisar el código fuente de este archivo, se observa que los nombres de los jugadores y sus equipos se imprimen directamente desde la base de datos sin limpieza de los datos. El codigo débil es:
 
+```
 echo "Name: " . $row\['name'\] . "  
 ";  
 echo "Team: " . $row\['team'\] . "  
 ";
+```
 
 Esto significa que si un atacante consigue registrar un jugador con un nombre malicioso (por ejemplo, inyectando un script en el campo "name" durante el registro o creación del jugador), ese script se ejecutará automáticamente en el navegador de cualquier persona que visite la lista de jugadores.
 
@@ -231,10 +241,12 @@ Se debe limitar el número de intentos de inicio de sesión fallidos desde una m
 
 Por ejemplo, podemos modificar auth.php para usar $\_SESSION y quitar datos sensibles, como contraseñas, de las cookies.
 
+```
 session\_start();  
 $\_SESSION\['user\_id'\] \= $user\['id'\];  
 $\_SESSION\['username'\] \= $user\['username'\];  
-session\_regenerate\_id(true); 
+session\_regenerate\_id(true);
+```
 
 3) ##  **Gestión del acceso a register.php**
 
@@ -251,11 +263,13 @@ Si el registro debe ser público pero controlado, se puede implementar un sistem
 Implementación factible:  
 Añadir una verificación de sesión al inicio de register.php para que solo usuarios autenticados (o admins) puedan acceder.
 
+```
 session\_start();  
 if (\!isset($\_SESSION\['user\_id'\])) {  
     header("Location: index.php");  
     exit();  
 }
+```
 
 4) ## **Protección de la carpeta private**
 
@@ -293,7 +307,7 @@ Implementar un control de sesiones robusto basado en el servidor:
 2. Verificar inactividad: Implementar un timeout (ej. 30 minutos). Si el usuario no interactúa, destruir la sesión.  
 3. Cookies HttpOnly y Secure: Configurar PHP para que la cookie de sesión (PHPSESSID) tenga los flags HttpOnly (para que JS no pueda leerla, mitigando XSS) y Secure (solo HTTPS).​  
    
-
+```
 session\_set\_cookie\_params(\[  
     'lifetime' \=\> 1800, *// 30 minutos*  
     'path' \=\> '/',  
@@ -303,6 +317,7 @@ session\_set\_cookie\_params(\[
     'samesite' \=\> 'Strict'  
 \]);  
 session\_start();
+```
 
 # **Parte 4 \- Servidores web**
 
@@ -323,9 +338,11 @@ Si un usuario accede a una carpeta que no tiene un archivo index.php o index.htm
 
 Podemos desactivar el módulo mod\_autoindex o usar la directiva Options \-Indexes en la configuración global o en el archivo .htaccess de la raíz:
 
+```
 \<Directory /var/www/html\>  
     Options \-Indexes  
 \</Directory\>
+```
 
 3) ##  **Configuración de cabeceras de seguridad HTTP**
 
@@ -337,17 +354,18 @@ Podemos añadir las siguientes cabeceras en la configuración de Apache (requier
 * X-Content-Type-Options: nosniff: Evita que el navegador intente "adivinar" el tipo de archivo (MIME-sniffing), forzándolo a respetar el Content-Type declarado. Esto ayuda a mitigar ataques donde se suben archivos maliciosos camuflados.  
 * Strict-Transport-Security (HSTS): Si se usa HTTPS (obligatorio en producción), esta cabecera fuerza a los navegadores a conectarse siempre de forma segura, evitando ataques de Downgrade.
 
-4) ## **Protección de archivos sensibles**
+4) ## **Protección de archivos privados del server**
 
 Como creo que vimos en el apartado 1d, los archivos de respaldo (.php\~, .bak, .sql) son una fuente crítica de información.
 
-Podemos configurar Apache para denegar el acceso a estos archivos mediante una directiva FilesMatch:
-
+Podemos configurar Apache para denegar el acceso a estos archivos con FilesMatch:
+```
 \<FilesMatch "(\\.(bak|config|sql|ini|log|sh|inc|swp)|\~)$"\>  
     Order allow,deny  
     Deny from all  
     Satisfy All  
 \</FilesMatch\>
+```
 
 Esto asegura que aunque un desarrollador olvide un archivo sensible en el servidor, nadie pueda descargarlo desde el navegador.
 
@@ -376,9 +394,12 @@ Aunque el botón es efectivo, requiere interacción del usuario (un clic). Para 
 
 Podemos inyectar una etiqueta HTML que obligue al navegador a realizar la petición en segundo plano tan pronto como se cargue la página de comentarios, sin que el usuario tenga que hacer clic en nada. Esta es la payload:
 
+```
 ¡Gran jugador\!  
+
 \<img src="http://web.pagos/donate.php?amount=100\&receiver=attacker"   
      width="0" height="0" style="display:none;" /\>
+```
 
 Al insertar este comentario, la etiqueta \<img\> intentará cargar una imagen desde la URL especificada en el atributo src.  
 El navegador interpretará esto como una petición legítima para obtener una imagen y realizará una petición GET a donate.php.  
@@ -403,7 +424,7 @@ No, no quedaría blindada. Cambiar de GET a POST no nos va a proteger contra CSR
 
 Ataque equivalente usando POST:  
 Para realizar la misma donación fraudulenta mediante POST sin interacción del usuario, necesitamos inyectar un formulario HTML y usar JavaScript para enviarlo automáticamente. El form puede ser así:
-
+```
 \<form id="csrf\_form" action="http://web.pagos/donate.php" method="POST"\>  
     \<input type="hidden" name="amount" value=”un\_monton\_un\_monton”t\>  
     \<input type="hidden" name="receiver" value="hello\_my\_fellow\_non\_hacker"\>  
@@ -411,6 +432,7 @@ Para realizar la misma donación fraudulenta mediante POST sin interacción del 
 \<script\>  
     document.getElementById('csrf\_form').submit();  
 \</script\>
+```
 
 Este código crea un formulario invisible con los datos necesarios. El script de JavaScript se ejecuta inmediatamente después de renderizar el formulario, invocando el método .submit(). Esto genera una petición POST desde el navegador de la víctima hacia  web.pagos,  consiguiendo lo mismo que en el GET.
 
